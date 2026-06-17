@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [development, release]
   pull_request:
-    branches: [main]
+    branches: [development, release]
 
 # Cancel superseded runs on the same ref.
 concurrency:
@@ -24,8 +24,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # Pinned to match pyproject.toml's [project.optional-dependencies].dev
+      # so local + CI + pre-commit format identically.
       - name: Install ruff
-        run: pip install "ruff>=0.6.0"
+        run: pip install "ruff==0.15.17"
 
       - name: ruff check
         run: ruff check .
