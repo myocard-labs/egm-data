@@ -22,7 +22,9 @@ repos:
         args: ["--fix=lf"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # Pinned to match the dev-extras ruff in pyproject.toml so local +
+    # CI + pre-commit format identically. Bump everywhere together.
+    rev: v0.15.17
     hooks:
       - id: ruff
         args: ["--fix"]

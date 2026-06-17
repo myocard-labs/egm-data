@@ -1,16 +1,16 @@
 # ---------------------------------------------------------------------------
-# pyproject.toml — myocard-labs python template
+# pyproject.toml — myocard-egm-data
 #
-# Find/replace before publishing:
-#   myocard-package-name   → PyPI distribution name (dash-separated, with myocard- prefix)
-#   myocard_package_name   → Python import name (underscore-separated)
-#   PACKAGE_DESCRIPTION    → one-line summary used by PyPI
-#   GITHUB_REPO_NAME       → bare repo name (no myocard- prefix)
+# I/O + dataset ergonomics layer for the intracardiac-EGM stack. Readers and
+# writers for every on-disk format defined by myocard-egm-contracts (HDF5
+# banks, run.json, metrics.csv, predictions, hybrid_eval_metrics,
+# model_metadata) plus the PyTorch `Dataset` wrappers, patient-aware split,
+# and the per-trace augmentation/normalization transform.
 #
-# Convention recap (LOCKED-IN 2026-06-13, see intracardiac-platform/project/refactor_checklist.md):
-#   GitHub repo  : egm-contracts                  (bare)
-#   PyPI dist    : myocard-egm-contracts          (myocard- prefix)
-#   Import name  : myocard_egm_contracts          (underscore)
+# Convention recap:
+#   GitHub repo  : egm-data                  (bare)
+#   PyPI dist    : myocard-egm-data          (myocard- prefix)
+#   Import name  : myocard_egm_data          (underscore)
 # ---------------------------------------------------------------------------
 
 [build-system]
@@ -18,16 +18,16 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "myocard-package-name"
+name = "myocard-egm-data"
 version = "0.1.0"
-description = "PACKAGE_DESCRIPTION"
+description = "I/O and dataset ergonomics for myocard-egm-contracts formats (HDF5 banks, run records, predictions) + PyTorch datasets and patient-aware splits."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [
   { name = "Daniel Klein", email = "daniel.anthony.klein.88@gmail.com" },
 ]
-keywords = ["cardiac", "electrophysiology", "signal-processing", "egm"]
+keywords = ["cardiac", "electrophysiology", "signal-processing", "egm", "hdf5", "dataset"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -41,38 +41,53 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 
+# Runtime deps are deliberately lean. Torch is an optional extra so a
+# downstream (e.g. the viewer, or a pure-numpy analysis script) can pull in
+# myocard-egm-data without dragging torch onto a machine that doesn't want
+# it. The contracts package is the format truth.
 dependencies = [
-  # Runtime deps go here. Keep this lean. Common floor: numpy + h5py.
-  # "numpy>=1.26",
-  # "h5py>=3.10",
+  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.1.2",
+  "numpy>=1.26",
+  "h5py>=3.10",
 ]
 
 [project.optional-dependencies]
+torch = [
+  "torch>=2.2",
+]
 dev = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
-  "ruff>=0.6.0",
-  "mypy>=1.10",
+  # ruff and mypy are pinned to exact versions (matching egm-contracts)
+  # so local dev, CI, and the pre-commit hook all run the same binary
+  # and format/typecheck identically. Bumping ruff or mypy means
+  # updating this line, .pre-commit-config.yaml, and ci.yml together.
+  "ruff==0.15.17",
+  "mypy==2.1.0",
   "pre-commit>=3.7",
   "nbstripout>=0.7",
+  # The torch extras are needed to typecheck + test the dataset wrappers.
+  "torch>=2.2",
 ]
 
 [project.urls]
-Homepage      = "https://github.com/myocard-labs/GITHUB_REPO_NAME"
-Repository    = "https://github.com/myocard-labs/GITHUB_REPO_NAME"
-Issues        = "https://github.com/myocard-labs/GITHUB_REPO_NAME/issues"
+Homepage      = "https://github.com/myocard-labs/egm-data"
+Repository    = "https://github.com/myocard-labs/egm-data"
+Issues        = "https://github.com/myocard-labs/egm-data/issues"
 Organization  = "https://github.com/myocard-labs"
-
-# Optional CLI entry points — uncomment + edit when the package ships commands.
-# [project.scripts]
-# myocard-foo = "myocard_package_name.cli:main"
 
 # ---------------------------------------------------------------------------
 # Hatch
 # ---------------------------------------------------------------------------
 
+# Hatchling refuses direct URL references in dependencies by default; we
+# need it during pre-1.0 iteration so we can pin myocard-egm-contracts to
+# a git tag. Drop this once everything ships on (Test)PyPI.
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/myocard_package_name"]
+packages = ["src/myocard_egm_data"]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -132,12 +147,10 @@ addopts = [
 ]
 filterwarnings = [
   "error",
-  # Add per-package allowlist below as needed, e.g.:
-  # "ignore::DeprecationWarning:some_third_party_lib",
 ]
 
 [tool.coverage.run]
-source = ["src/myocard_package_name"]
+source = ["src/myocard_egm_data"]
 branch = true
 
 [tool.coverage.report]
@@ -163,15 +176,13 @@ no_implicit_optional = true
 show_error_codes = true
 files = ["src", "tests"]
 
-# Per-module overrides for libraries without type stubs.
-# Uncomment + edit when the package starts importing one of these.
-# Listing them here when the imports aren't present triggers
-# `warn_unused_configs` and clutters the mypy output.
-#
-# [[tool.mypy.overrides]]
-# module = [
-#   "h5py.*",
-#   "scipy.*",
-#   "matplotlib.*",
-# ]
-# ignore_missing_imports = true
+# h5py and torch ship without complete inline stubs; ignore-missing-imports
+# silences the dance without sacrificing strict checking everywhere else.
+# myocard-egm-contracts now ships py.typed, so it can be type-checked
+# normally and is NOT in this override list.
+[[tool.mypy.overrides]]
+module = [
+  "h5py.*",
+  "torch.*",
+]
+ignore_missing_imports = true

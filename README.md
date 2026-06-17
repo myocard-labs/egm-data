@@ -1,78 +1,68 @@
-# myocard-package-name
+# myocard-egm-data
 
-> One-sentence pitch: PACKAGE_DESCRIPTION.
+> I/O and dataset ergonomics for the intracardiac-EGM stack: readers and writers for every on-disk format defined by [`myocard-egm-contracts`](https://github.com/myocard-labs/egm-contracts), plus PyTorch `Dataset` wrappers, patient-aware splits, and the per-trace augmentation/normalization transform.
 
-Part of the [myocard-labs](https://github.com/myocard-labs) cardiac signal processing toolkit.
-
-> [!NOTE]
-> This file was scaffolded from
-> [`myocard-labs/python-template`](https://github.com/myocard-labs/python-template).
-> If you're looking at the template repo itself, see `TEMPLATE_USAGE.md` for the
-> rename procedure. The template is for **library packages only** — meta repos
-> (`intracardiac-platform`) and the paper repo (`intracardiac-paper`) have their
-> own hand-built skeletons.
+Part of the [myocard-labs](https://github.com/myocard-labs) cardiac signal-processing toolkit.
 
 ---
 
 ## Why
 
-Two or three paragraphs answering:
+The on-disk formats (HDF5 banks, JSON run records, CSV metrics, etc.) are owned by [`myocard-egm-contracts`](https://github.com/myocard-labs/egm-contracts) as JSON Schemas. `myocard-egm-data` is the matching I/O layer: every writer produces a file that the contracts' file-level validators accept, and every reader returns a Python-friendly view of the same.
 
-- What problem does this package solve?
-- Where does it sit in the broader pipeline (upstream/downstream packages)?
-- Who would actually want to install it standalone?
+What this package contains:
 
-Be concrete. Hiring managers and future collaborators read this section first.
+- **Bank readers and writers** for the two HDF5 schemas — `synthetic_bank` (clean or hybrid clean+noise EGMs) and `iafdb_healthy_bank` (calibrated + band-passed segments). The reader auto-detects which schema a file conforms to.
+- **Record readers and writers** for the JSON / CSV training artifacts — `run.json`, `metrics.csv`, `predictions_<eval_name>.{json,csv}`, `hybrid_eval_metrics.json`, and `model_metadata.json`.
+- **PyTorch `Dataset` wrappers** including the `TraceTransform` per-trace normalize+pad+augment pipeline, the patient-aware split, and a `build_dataloaders` convenience that ties banks + splits + datasets together.
+
+Schema versioning lives in `myocard-egm-contracts`; this package is the thin I/O layer over those schemas.
 
 ---
 
 ## Install
 
-From PyPI (when published):
+From source during pre-1.0 iteration:
 
 ```bash
-pip install myocard-package-name
+pip install git+https://github.com/myocard-labs/egm-data.git
 ```
 
-From source (during pre-1.0 iteration):
+With the optional torch extras (needed for `myocard_egm_data.datasets`):
 
 ```bash
-pip install git+https://github.com/myocard-labs/GITHUB_REPO_NAME.git
+pip install "myocard-egm-data[torch] @ git+https://github.com/myocard-labs/egm-data.git"
 ```
 
 Editable install for development:
 
 ```bash
-git clone https://github.com/myocard-labs/GITHUB_REPO_NAME.git
-cd GITHUB_REPO_NAME
+git clone https://github.com/myocard-labs/egm-data.git
+cd egm-data
 pip install -e ".[dev]"
 pre-commit install
 ```
 
 ---
 
-## Quick start
-
-A copy-pasteable example that demonstrates the headline use case. Keep it small:
-
-```bash
-myocard-foo --input data/sample.h5 --output results/
-```
-
-If the package is library-only with no CLI, link to the Programmatic Usage section below.
-
----
-
 ## Programmatic usage
 
 ```python
-import myocard_package_name
+from myocard_egm_data.banks import load_bank, write_synthetic_bank
+from myocard_egm_data.records import write_run_record
+from myocard_egm_data.datasets import build_dataloaders
 
-# A short example showing the primary public API.
-# Prefer one tight working example over five partial ones.
+# Auto-detects synthetic vs IAFDB schema.
+bank = load_bank("data/hybrid_v1.h5")
+print(bank.n_traces, bank.n_samples, bank.schema)
+
+# Patient-aware split + per-trace transform + DataLoader, all in one call.
+bundle = build_dataloaders("data/hybrid_v1.h5", batch_size=64)
+for x, y in bundle.train:
+    ...
 ```
 
-Link to longer examples in `examples/` or to `intracardiac-platform/examples/` for the cross-package workflows.
+The bank, record, splits, and augmentation packages do not import torch. Only `myocard_egm_data.datasets` does — a notebook or viewer can install without it.
 
 ---
 
@@ -86,26 +76,26 @@ ruff format --check .   # format check
 mypy                    # type check
 ```
 
+The round-trip tests construct fixtures, write them through this package's writers, validate them with the contracts' file-level validators, then read them back and assert structure. If a writer drifts from a schema the validator will catch it.
+
 CI runs the same checks on Python 3.10, 3.11, and 3.12 — see `.github/workflows/ci.yml`.
 
 ---
 
 ## Project status
 
-This package is part of the in-progress [myocard-labs](https://github.com/myocard-labs) refactor. Pre-1.0 — expect breaking changes across minor versions until the schema/API stabilizes. See `intracardiac-platform/project/project_plan.md` for roadmap.
+Part of the in-progress [myocard-labs](https://github.com/myocard-labs) refactor. Pre-1.0 — expect breaking changes across minor versions until the schema/API stabilizes. See `intracardiac-platform/project/project_plan.md` for the roadmap.
 
 ---
 
 ## Citation
 
-If you use this software in academic work, please cite:
-
 ```bibtex
-@software{klein_myocard_package_name_2026,
+@software{klein_myocard_egm_data_2026,
   author  = {Klein, Daniel},
-  title   = {myocard-package-name: PACKAGE_DESCRIPTION},
+  title   = {myocard-egm-data: I/O and dataset ergonomics for intracardiac EGM formats},
   year    = {2026},
-  url     = {https://github.com/myocard-labs/GITHUB_REPO_NAME},
+  url     = {https://github.com/myocard-labs/egm-data},
 }
 ```
 
@@ -113,4 +103,4 @@ If you use this software in academic work, please cite:
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Attribution requirements for data sources used by this package are listed in [NOTICE](NOTICE).
+MIT — see [LICENSE](LICENSE). Attribution requirements for any data sources surfaced through this package are listed in [NOTICE](NOTICE).
