@@ -88,6 +88,11 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/myocard_egm_data"]
+# Ship py.typed so downstream consumers (and CI mypy) can type-check
+# imports from this package without an ignore-missing-imports override.
+artifacts = [
+  "src/myocard_egm_data/py.typed",
+]
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -127,6 +132,14 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["B011"]
 "__init__.py"   = ["F401"]
+
+# Pin the isort grouping explicitly so local + CI agree. Without this,
+# ruff's auto-detection can put `myocard_egm_contracts` and
+# `myocard_egm_data` in the same group locally but different groups in
+# CI (where both are installed editable). Lock the convention here.
+[tool.ruff.lint.isort]
+known-first-party = ["myocard_egm_data"]
+known-third-party = ["myocard_egm_contracts"]
 
 [tool.ruff.format]
 quote-style = "double"

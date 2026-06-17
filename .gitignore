@@ -70,7 +70,6 @@ coverage.xml
 *.safetensors
 
 data/
-banks/
 checkpoints/
 runs/
 logs/
