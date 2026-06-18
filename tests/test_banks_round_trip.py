@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 from myocard_egm_contracts.validators import (
     validate_iafdb_bank,
+    validate_noise_bank,
     validate_synthetic_bank,
 )
 
@@ -33,9 +34,11 @@ from myocard_egm_data.banks import (
     load_iafdb_bank_as_classifier,
     load_synthetic_bank_as_classifier,
     read_iafdb_bank_hdf5,
+    read_noise_bank_hdf5,
     read_synthetic_bank_hdf5,
     synthetic_bank_to_classifier,
     write_classifier_bank,
+    write_noise_bank,
 )
 
 # ---------------------------------------------------------------------------
@@ -298,3 +301,54 @@ def test_classifier_bank_hdf5_round_trip(tmp_path: Path) -> None:
     assert loaded.traces[2].label_truth is None
     assert loaded.traces[2].prediction is None
     assert loaded.traces[2].split is None
+
+
+# ---------------------------------------------------------------------------
+# Noise bank — slim schema; no ClassifierBank converter (per Daniel 2026-06-17)
+# ---------------------------------------------------------------------------
+
+
+def test_noise_bank_round_trip_validates(noise_bank_path: Path) -> None:
+    """The slim noise_bank writer must produce a file the contracts'
+    file-level validator accepts. The schema carries only signal +
+    source_record + source_channel per trace, plus schema_version /
+    created_utc / source / fs_hz at the root."""
+    result = validate_noise_bank(noise_bank_path)
+    assert result.ok, result.issues
+
+
+def test_noise_bank_reader_round_trips(noise_bank_path: Path) -> None:
+    """Write a noise bank via the egm-data writer, read it back via the
+    Pydantic-mode reader, and confirm the per-trace columns round-trip
+    untouched. Catches dtype confusion (utf-8 bytes vs str) and any
+    silent shape mangling between the two paths."""
+    pyd_bank = read_noise_bank_hdf5(noise_bank_path)
+    assert pyd_bank.fs_hz == 1000.0
+    assert pyd_bank.source == "iafdb v1.0.0"
+    assert len(pyd_bank.traces.signal) == 4
+    assert len(pyd_bank.traces.signal[0]) == 512
+    # source_record / source_channel are the audit fields propagated to
+    # each hybrid output trace; failing this would make noise-origin
+    # debugging impossible downstream.
+    assert list(pyd_bank.traces.source_record) == ["iaf1_afw"] * 4
+    assert list(pyd_bank.traces.source_channel) == ["CS12", "CS34", "CS12", "CS34"]
+
+
+def test_noise_bank_overwrite_guard(tmp_path: Path, noise_bank_path: Path) -> None:
+    """The writer refuses to clobber an existing file unless overwrite=True.
+    Prevents producers from silently destroying a previous extraction
+    they meant to keep — the same guard pattern as write_iafdb_bank."""
+    import pytest
+    from myocard_egm_contracts import noise_bank as noise_bank_models
+
+    pyd_bank = read_noise_bank_hdf5(noise_bank_path)
+    target = tmp_path / "second.h5"
+    write_noise_bank(pyd_bank, target)
+    with pytest.raises(FileExistsError):
+        write_noise_bank(pyd_bank, target)
+    # overwrite=True succeeds and round-trips cleanly.
+    write_noise_bank(pyd_bank, target, overwrite=True)
+    reloaded = read_noise_bank_hdf5(target)
+    assert reloaded.source == pyd_bank.source
+    # Quiet the unused-import warning for type-only reference.
+    assert noise_bank_models.NoiseBank is not None

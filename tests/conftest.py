@@ -1,10 +1,11 @@
 """Shared fixtures — Pydantic bank builders that the writers serialize.
 
-We build the source-bank artifacts (synthetic, IAFDB) by constructing
-the Pydantic models codegen'd from egm-contracts schemas and handing
-them to ``write_synthetic_bank`` / ``write_iafdb_bank``. There is no
-parallel set of dataclasses in egm-data anymore; the contracts package
-is the only place those types live.
+We build the source-bank artifacts (synthetic, IAFDB, noise) by
+constructing the Pydantic models codegen'd from egm-contracts schemas
+and handing them to ``write_synthetic_bank`` / ``write_iafdb_bank`` /
+``write_noise_bank``. There is no parallel set of dataclasses in
+egm-data anymore; the contracts package is the only place those types
+live.
 """
 
 from __future__ import annotations
@@ -15,9 +16,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 from myocard_egm_contracts import iafdb_bank as iafdb_bank_models
+from myocard_egm_contracts import noise_bank as noise_bank_models
 from myocard_egm_contracts import synthetic_bank as synthetic_bank_models
 
-from myocard_egm_data.banks import write_iafdb_bank, write_synthetic_bank
+from myocard_egm_data.banks import write_iafdb_bank, write_noise_bank, write_synthetic_bank
 
 
 @pytest.fixture
@@ -111,7 +113,7 @@ def iafdb_bank_path(tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_sa
 
     pyd_bank = iafdb_bank_models.IafdbBank.model_validate(
         {
-            "schema_version": "1.0",
+            "schema_version": "1.1",
             "created_utc": _now_iso(),
             "source": "iafdb v1.0.0",
             "fs_hz": fs_hz,
@@ -138,4 +140,36 @@ def iafdb_bank_path(tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_sa
     )
     path = tmp_path / "iafdb_bank.h5"
     write_iafdb_bank(pyd_bank, path)
+    return path
+
+
+@pytest.fixture
+def noise_bank_path(tmp_path: Path, fs_hz: float, n_samples: int) -> Path:
+    """Build a tiny Pydantic NoiseBank and write it to HDF5.
+
+    Four traces from two patients x two bipolar channels. The schema
+    (v1.0) is intentionally minimal — only signal + source_record +
+    source_channel per trace plus schema_version / created_utc / source
+    / fs_hz at the root. Extraction provenance lives in the sibling
+    noise_bank_run_record JSON; see the records-side fixture for that.
+    """
+    rng = np.random.default_rng(2)
+    n = 4
+    signal = [rng.standard_normal(n_samples).astype(np.float32).tolist() for _ in range(n)]
+
+    pyd_bank = noise_bank_models.NoiseBank.model_validate(
+        {
+            "schema_version": "1.0",
+            "created_utc": _now_iso(),
+            "source": "iafdb v1.0.0",
+            "fs_hz": fs_hz,
+            "traces": {
+                "signal": signal,
+                "source_record": ["iaf1_afw"] * n,
+                "source_channel": ["CS12", "CS34", "CS12", "CS34"],
+            },
+        }
+    )
+    path = tmp_path / "noise_bank.h5"
+    write_noise_bank(pyd_bank, path)
     return path
