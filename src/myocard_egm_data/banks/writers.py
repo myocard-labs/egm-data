@@ -247,7 +247,13 @@ def write_iafdb_bank(
         f.attrs["calibration_method"] = _enum_or_str(bank.calibration_method)
         f.attrs["calibration_target_qrs_pp_mv"] = float(bank.calibration_target_qrs_pp_mv)
         f.attrs["threshold_mode"] = _enum_or_str(bank.threshold_mode)
-        f.attrs["threshold_value"] = float(bank.threshold_value)
+        # iafdb_bank schema 1.1 allows threshold_value to be null when
+        # threshold_mode is "none" (unfiltered export). HDF5 has no
+        # native null, so we stamp NaN — JSON Schema accepts NaN as a
+        # number and the validator round-trips it via json.loads.
+        f.attrs["threshold_value"] = (
+            float(bank.threshold_value) if bank.threshold_value is not None else float("nan")
+        )
         f.attrs["band_hz"] = np.asarray([float(_unwrap(x)) for x in bank.band_hz], dtype=np.float64)
         f.attrs["window_ms"] = float(bank.window_ms)
         f.attrs["window_samples"] = window_samples

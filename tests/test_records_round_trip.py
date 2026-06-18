@@ -14,15 +14,19 @@ from myocard_egm_contracts.validators import (
     validate_hybrid_eval_metrics,
     validate_metrics,
     validate_model_metadata,
+    validate_noise_bank_run_record,
     validate_run_record,
 )
 
 from myocard_egm_data.records import (
+    build_noise_bank_run_record,
     load_metrics_csv,
+    load_noise_bank_run_record,
     load_run_record,
     write_hybrid_eval_metrics,
     write_metrics_csv,
     write_model_metadata,
+    write_noise_bank_run_record,
     write_run_record,
 )
 from myocard_egm_data.records.writers import build_run_record
@@ -245,3 +249,84 @@ def test_model_metadata_round_trip(tmp_path: Path) -> None:
 
     result = validate_model_metadata(path)
     assert result.ok, result.issues
+
+
+# ---------------------------------------------------------------------------
+# noise_bank_run_record (JSON sidecar to noise_bank)
+# ---------------------------------------------------------------------------
+
+
+def test_noise_bank_run_record_round_trip_with_provenance(tmp_path: Path) -> None:
+    """Build a complete run record (windowing + calibration + selection +
+    per_trace_provenance), write it, validate against the contract, read
+    it back. The builder shape must agree with what the contracts'
+    validator expects — this is the alignment point between producer
+    code in iafdb-pipeline (which will call build_noise_bank_run_record)
+    and the schema."""
+    doc = build_noise_bank_run_record(
+        source="iafdb v1.0.0",
+        fs_hz=1000.0,
+        window_ms=512.0,
+        window_samples=512,
+        hop_ms=256.0,
+        band_hz=[30.0, 300.0],
+        calibration_method="r_wave_anchoring",
+        calibration_target_qrs_pp_mv=1.0,
+        threshold_mode="percentile",
+        threshold_value=10.0,
+        source_records=["iaf1_afw"],
+        description="round-trip test fixture",
+        per_trace_provenance={
+            "patient_id": ["iaf1", "iaf1"],
+            "start_sample": [0, 256],
+            "peak_to_peak_mv": [0.05, 0.07],
+            "calibration_scalar": [0.0035, 0.0035],
+        },
+    )
+    path = tmp_path / "noise_bank_run_record.json"
+    write_noise_bank_run_record(path, doc)
+
+    result = validate_noise_bank_run_record(path)
+    assert result.ok, result.issues
+
+    loaded = load_noise_bank_run_record(path)
+    assert loaded["schema_version"] == "1.0"
+    assert loaded["windowing"]["window_samples"] == 512
+    assert loaded["calibration"]["method"] == "r_wave_anchoring"
+    assert loaded["selection"]["threshold_mode"] == "percentile"
+    # per_trace_provenance must round-trip with array alignment intact
+    # — that's the contract with downstream auditing tools.
+    assert loaded["per_trace_provenance"]["patient_id"] == ["iaf1", "iaf1"]
+    assert loaded["per_trace_provenance"]["start_sample"] == [0, 256]
+
+
+def test_noise_bank_run_record_round_trip_without_provenance(tmp_path: Path) -> None:
+    """Per-trace provenance is OPTIONAL in the schema — smaller test
+    fixtures or producers that don't have it can omit it. Confirm the
+    builder + writer + validator path still works with no
+    per_trace_provenance block."""
+    doc = build_noise_bank_run_record(
+        source="iafdb v1.0.0",
+        fs_hz=1000.0,
+        window_ms=512.0,
+        window_samples=512,
+        hop_ms=256.0,
+        band_hz=[30.0, 300.0],
+        calibration_method="none",
+        calibration_target_qrs_pp_mv=None,
+        threshold_mode="percentile",
+        threshold_value=10.0,
+        source_records=["iaf1_afw"],
+    )
+    path = tmp_path / "noise_bank_run_record.json"
+    write_noise_bank_run_record(path, doc)
+
+    result = validate_noise_bank_run_record(path)
+    assert result.ok, result.issues
+
+    loaded = load_noise_bank_run_record(path)
+    # When calibration has no notion of a target, target_qrs_pp_mv is
+    # null in the record. Producers using calibration_method='none' for
+    # raw-signal pretraining banks rely on this.
+    assert loaded["calibration"]["target_qrs_pp_mv"] is None
+    assert "per_trace_provenance" not in loaded

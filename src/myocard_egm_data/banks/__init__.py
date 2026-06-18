@@ -16,12 +16,18 @@ Public surface:
 - :func:`synthetic_bank_to_classifier`,
   :func:`iafdb_bank_to_classifier` — converters taking already-read
   Pydantic models.
-- :func:`read_synthetic_bank_hdf5`, :func:`read_iafdb_bank_hdf5` —
-  HDF5 -> Pydantic source bank.
-- :func:`write_synthetic_bank`, :func:`write_iafdb_bank` — writers for
-  the source-bank formats (used by the producer pipelines).
+- :func:`read_synthetic_bank_hdf5`, :func:`read_iafdb_bank_hdf5`,
+  :func:`read_noise_bank_hdf5` — HDF5 -> Pydantic source bank.
+- :func:`write_synthetic_bank`, :func:`write_iafdb_bank`,
+  :func:`write_noise_bank` — writers for the source-bank formats
+  (used by the producer pipelines).
 - :func:`write_classifier_bank`, :func:`load_classifier_bank` — HDF5
   I/O for ClassifierBank itself.
+
+The noise_bank format is intentionally minimal — it carries only what
+the synthetic mixer consumes. The extraction-provenance sidecar
+(noise_bank_run_record JSON) is handled by
+:mod:`myocard_egm_data.records.noise_bank_run_record`.
 """
 
 from __future__ import annotations
@@ -43,6 +49,7 @@ from .converters import (
     load_synthetic_bank_as_classifier,
     synthetic_bank_to_classifier,
 )
+from .noise_bank import read_noise_bank_hdf5, write_noise_bank
 from .readers import read_iafdb_bank_hdf5, read_synthetic_bank_hdf5
 from .writers import (
     write_iafdb_bank,
@@ -63,9 +70,11 @@ __all__ = [
     "load_iafdb_bank_as_classifier",
     "load_synthetic_bank_as_classifier",
     "read_iafdb_bank_hdf5",
+    "read_noise_bank_hdf5",
     "read_synthetic_bank_hdf5",
     "synthetic_bank_to_classifier",
     "write_classifier_bank",
     "write_iafdb_bank",
+    "write_noise_bank",
     "write_synthetic_bank",
 ]

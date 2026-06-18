@@ -30,6 +30,11 @@ from __future__ import annotations
 # model is the single source of truth.
 from myocard_egm_contracts._generated.python.run_record import EpochRecord
 
+from .noise_bank_run_record import (
+    build_noise_bank_run_record,
+    load_noise_bank_run_record,
+    write_noise_bank_run_record,
+)
 from .readers import (
     load_metrics_csv,
     load_run_record,
@@ -43,10 +48,13 @@ from .writers import (
 
 __all__ = [
     "EpochRecord",
+    "build_noise_bank_run_record",
     "load_metrics_csv",
+    "load_noise_bank_run_record",
     "load_run_record",
     "write_hybrid_eval_metrics",
     "write_metrics_csv",
     "write_model_metadata",
+    "write_noise_bank_run_record",
     "write_run_record",
 ]
