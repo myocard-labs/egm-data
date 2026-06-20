@@ -15,8 +15,10 @@ load for that schema only, mirroring the per-schema layout in
 
 - :mod:`.training_run_record` — ``build_training_run_record``,
   ``write_training_run_record``, ``load_training_run_record``,
-  ``best_epoch``; re-exports :class:`TrainingRunRecord` and its
-  nested models from contracts.
+  ``best_epoch``, ``make_epoch_record`` (smart constructor for one
+  :class:`EpochRecord` from a flat ``val_metrics`` dict, used by
+  trainers between per-epoch updates); re-exports
+  :class:`TrainingRunRecord` and its nested models from contracts.
 - :mod:`.training_metrics` — ``write_training_metrics``,
   ``load_training_metrics``; re-exports
   :class:`TrainingMetricsRow`. No ``build_*`` helper: the schema
@@ -102,6 +104,7 @@ from .training_run_record import (
     best_epoch,
     build_training_run_record,
     load_training_run_record,
+    make_epoch_record,
     write_training_run_record,
 )
 
@@ -138,6 +141,7 @@ __all__ = [
     "load_noise_bank_run_record",
     "load_training_metrics",
     "load_training_run_record",
+    "make_epoch_record",
     "write_egm_class_model_metadata",
     "write_hybrid_eval_metrics",
     "write_noise_bank_run_record",
