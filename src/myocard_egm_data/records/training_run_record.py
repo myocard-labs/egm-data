@@ -46,8 +46,89 @@ __all__ = [
     "best_epoch",
     "build_training_run_record",
     "load_training_run_record",
+    "make_epoch_record",
     "write_training_run_record",
 ]
+
+
+def make_epoch_record(
+    *,
+    epoch: int,
+    lr: float,
+    train_loss: float | None,
+    val_loss: float | None,
+    epoch_seconds: float,
+    val_metrics: Mapping[str, Any],
+) -> EpochRecord:
+    """Smart constructor for one :class:`EpochRecord` from a flat val_metrics dict.
+
+    The trainer's :func:`binary_metrics`-style output mixes scalar
+    metrics (``auroc``, ``accuracy``, ``f1``, ``ece``, etc.) and a
+    nested ``reliability`` list in the same dict. This helper splits
+    them into the dedicated ``val_metrics`` and ``val_reliability``
+    fields of :class:`EpochRecord`, sanitizes non-finite floats to
+    ``None``, and coerces reliability entries from whatever shape the
+    producer hands in (Pydantic :class:`ReliabilityBin`, plain dict,
+    or any object with the five ``lo`` / ``hi`` / ``count`` /
+    ``confidence`` / ``accuracy`` attributes) into the contracts
+    :class:`ReliabilityBin` Pydantic model.
+
+    Producers (currently ``myocard-egm-classifier``'s trainer) call
+    this once per epoch and collect the resulting list of typed
+    records to pass to :func:`build_training_run_record`.
+
+    Parameters
+    ----------
+    epoch
+        1-based epoch number.
+    lr
+        Learning rate at the epoch's last optimizer step.
+    train_loss, val_loss
+        Mean per-epoch losses. ``None`` is allowed; it round-trips
+        through ``null`` in the run.json.
+    epoch_seconds
+        Wall-clock seconds for the epoch (training + validation).
+    val_metrics
+        Flat dict produced by the trainer's metrics layer. If it
+        contains a ``"reliability"`` key, the value is extracted into
+        :attr:`EpochRecord.val_reliability`; every other key/value
+        pair becomes part of :attr:`EpochRecord.val_metrics`.
+    """
+    reliability_raw = val_metrics.get("reliability", [])
+    bins = [_coerce_reliability_bin(b) for b in reliability_raw]
+    scalar = {k: v for k, v in val_metrics.items() if k != "reliability"}
+    return EpochRecord(
+        epoch=epoch,
+        lr=lr,
+        train_loss=_sanitize_floats(train_loss),
+        val_loss=_sanitize_floats(val_loss),
+        epoch_seconds=epoch_seconds,
+        val_metrics=_sanitize_floats(scalar),
+        val_reliability=bins,
+    )
+
+
+def _coerce_reliability_bin(b: Any) -> ReliabilityBin:
+    """Coerce an arbitrary reliability-bin input into the contracts model.
+
+    Accepts (a) an already-typed :class:`ReliabilityBin`, (b) a
+    mapping with the five expected keys (validated via Pydantic), or
+    (c) any object exposing the five attributes by name (dataclass,
+    namedtuple, custom class). Anything else raises
+    ``pydantic.ValidationError`` or ``AttributeError`` at the
+    boundary, which is the right place for the failure to surface.
+    """
+    if isinstance(b, ReliabilityBin):
+        return b
+    if isinstance(b, Mapping):
+        return ReliabilityBin.model_validate(b)
+    return ReliabilityBin(
+        lo=b.lo,
+        hi=b.hi,
+        count=b.count,
+        confidence=b.confidence,
+        accuracy=b.accuracy,
+    )
 
 
 def build_training_run_record(

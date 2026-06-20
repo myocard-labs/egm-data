@@ -39,6 +39,7 @@ from myocard_egm_data.records import (
     load_noise_bank_run_record,
     load_training_metrics,
     load_training_run_record,
+    make_epoch_record,
     write_egm_class_model_metadata,
     write_hybrid_eval_metrics,
     write_noise_bank_run_record,
@@ -126,6 +127,53 @@ def test_training_run_record_round_trips(tmp_path: Path) -> None:
     assert loaded.schema_version.value == "1.0"
     assert loaded.best.epoch == 2
     assert len(loaded.epochs) == 2
+
+
+def test_make_epoch_record_accepts_three_reliability_shapes() -> None:
+    """``make_epoch_record`` is the trainer-facing smart constructor.
+    It must accept reliability bins as (a) typed Pydantic
+    :class:`ReliabilityBin`, (b) plain dicts with the five fields, or
+    (c) any duck-typed object with the five attributes. All three end
+    up as the same typed list inside the resulting :class:`EpochRecord`.
+    Also confirms NaN scalar values in ``val_metrics`` are sanitized
+    to ``None``."""
+
+    class _DuckBin:
+        def __init__(self, lo: float, hi: float) -> None:
+            self.lo = lo
+            self.hi = hi
+            self.count = 0
+            self.confidence = 0.0
+            self.accuracy = 0.0
+
+    val_metrics = {
+        "auroc": float("nan"),  # sanitized to None
+        "accuracy": 0.8,
+        "reliability": [
+            ReliabilityBin(lo=0.0, hi=0.5, count=10, confidence=0.25, accuracy=0.20),
+            {"lo": 0.5, "hi": 0.75, "count": 5, "confidence": 0.6, "accuracy": 0.7},
+            _DuckBin(0.75, 1.0),
+        ],
+    }
+    rec = make_epoch_record(
+        epoch=1,
+        lr=1e-3,
+        train_loss=0.5,
+        val_loss=0.45,
+        epoch_seconds=12.0,
+        val_metrics=val_metrics,
+    )
+    assert isinstance(rec, EpochRecord)
+    # All three bins are now typed ReliabilityBin instances.
+    assert len(rec.val_reliability) == 3
+    assert all(isinstance(b, ReliabilityBin) for b in rec.val_reliability)
+    assert rec.val_reliability[0].count == 10
+    assert rec.val_reliability[1].confidence == 0.6
+    assert rec.val_reliability[2].lo == 0.75
+    # The reliability key is split out of val_metrics; NaN goes to None.
+    assert "reliability" not in rec.val_metrics
+    assert rec.val_metrics["auroc"] is None
+    assert rec.val_metrics["accuracy"] == 0.8
 
 
 # ---------------------------------------------------------------------------
