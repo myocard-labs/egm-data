@@ -19,7 +19,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "myocard-egm-data"
-version = "0.2.0"
+version = "0.3.0"
 description = "I/O and dataset ergonomics for myocard-egm-contracts formats (HDF5 banks, run records, predictions) + PyTorch datasets and patient-aware splits."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -46,7 +46,7 @@ classifiers = [
 # myocard-egm-data without dragging torch onto a machine that doesn't want
 # it. The contracts package is the format truth.
 dependencies = [
-  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.2.0",
+  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.3.0",
   "numpy>=1.26",
   "h5py>=3.10",
 ]

@@ -1,60 +1,146 @@
-"""Record I/O — the JSON / CSV training and evaluation artifacts.
+"""Record I/O — typed JSON / CSV training and evaluation artifacts.
 
-The package owns readers and writers for everything that is *not* a bank:
+The package owns the on-disk format for everything that is *not* a
+bank: the per-run ML training record (``run.json``), the per-epoch
+metrics table (``metrics.csv``), the hybrid eval summary
+(``hybrid_eval_metrics.json``), the EGM-classifier inference-side
+model metadata (``model_metadata.json``), and the noise-bank
+provenance sidecar (``noise_bank_run_record.json``).
 
-- ``run.json`` (``run_record`` schema): the full-fidelity, versioned
-  per-run record (run metadata + config + epoch-by-epoch records + best
-  epoch summary + optional held-out test block).
-- ``metrics.csv`` (``metrics`` schema describes one row): the flat
-  per-epoch metrics table, trivially loadable into pandas / a plotting
-  lib / a spreadsheet.
-- ``hybrid_eval_metrics.json`` (``hybrid_eval_metrics`` schema): the
-  hybrid (synthetic + IAFDB) eval summary. Per-trace prediction outputs
-  live inside the producing ClassifierBank, not in a separate record.
-- ``model_metadata.json`` (``model_metadata`` schema): the inference
-  contract for a deployed model artifact.
+Layout
+------
+Each schema gets its own per-file module that owns build + write +
+load for that schema only, mirroring the per-schema layout in
+``myocard-egm-contracts._generated.python.*``:
 
-Schema versions live in ``myocard-egm-contracts``; this package writes
-them into the right field on every artifact via ``schema_info``. The
-writers do not enforce the schema — that is what the contracts'
-file-level validators are for — but the round-trip tests in this repo
-hold the line.
+- :mod:`.training_run_record` — ``build_training_run_record``,
+  ``write_training_run_record``, ``load_training_run_record``,
+  ``best_epoch``; re-exports :class:`TrainingRunRecord` and its
+  nested models from contracts.
+- :mod:`.training_metrics` — ``write_training_metrics``,
+  ``load_training_metrics``; re-exports
+  :class:`TrainingMetricsRow`. No ``build_*`` helper: the schema
+  describes one row, the file is N rows, no per-document
+  ``schema_version`` field.
+- :mod:`.hybrid_eval_metrics` — ``build_hybrid_eval_metrics``,
+  ``write_hybrid_eval_metrics``, ``load_hybrid_eval_metrics``;
+  re-exports :class:`HybridEvalMetrics` and its nested models.
+- :mod:`.egm_class_model_metadata` —
+  ``build_egm_class_model_metadata``,
+  ``write_egm_class_model_metadata``,
+  ``load_egm_class_model_metadata``; re-exports
+  :class:`EgmClassModelMetadata` and its nested models. Specific to
+  the 1-D EGM-classifier family (future 2-D / 3-D electrode model
+  topologies will get their own per-schema modules).
+- :mod:`.noise_bank_run_record` — ``build_noise_bank_run_record``,
+  ``write_noise_bank_run_record``, ``load_noise_bank_run_record``;
+  re-exports :class:`NoiseBankRunRecord` and its nested models.
+
+Shared low-level plumbing lives in :mod:`._helpers` (NaN
+sanitization, strict-JSON writer, typed reader). It is strictly
+internal — not re-exported here.
+
+Typing
+------
+Every ``build_*`` returns a Pydantic model from
+``myocard-egm-contracts``; every ``write_*`` takes a model;
+every ``load_*`` returns a model. Dict-shaped inputs to the build
+helpers are validated into nested sub-models by Pydantic at
+construction time, so producers can hand-build a block as a mapping
+and let the helper enforce the shape.
+
+Schema validation is the Pydantic model — call
+``myocard_egm_contracts.validators.*`` if you want the additional
+JSON-Schema-level cross-cutting checks (the typed read path already
+enforces the data shape).
 """
 
 from __future__ import annotations
 
-# Re-export the run_record schema's EpochRecord Pydantic model from
-# myocard-egm-contracts so consumers can `from myocard_egm_data.records
-# import EpochRecord` without learning the egm-contracts subpackage
-# layout. There is no separate egm-data dataclass here — the Pydantic
-# model is the single source of truth.
-from myocard_egm_contracts._generated.python.run_record import EpochRecord
-
+from .egm_class_model_metadata import (
+    Decision,
+    EgmClassModelMetadata,
+    Input,
+    ModelArtifact,
+    Output,
+    Preprocessing,
+    build_egm_class_model_metadata,
+    load_egm_class_model_metadata,
+    write_egm_class_model_metadata,
+)
+from .hybrid_eval_metrics import (
+    HybridEvalMetrics,
+    IafdbOnly,
+    Mixed,
+    Producer,
+    build_hybrid_eval_metrics,
+    load_hybrid_eval_metrics,
+    write_hybrid_eval_metrics,
+)
 from .noise_bank_run_record import (
+    Calibration,
+    NoiseBankRunRecord,
+    PerTraceProvenance,
+    Selection,
+    ThresholdMode,
+    Windowing,
     build_noise_bank_run_record,
     load_noise_bank_run_record,
     write_noise_bank_run_record,
 )
-from .readers import (
-    load_metrics_csv,
-    load_run_record,
+from .training_metrics import (
+    TrainingMetricsRow,
+    load_training_metrics,
+    write_training_metrics,
 )
-from .writers import (
-    write_hybrid_eval_metrics,
-    write_metrics_csv,
-    write_model_metadata,
-    write_run_record,
+from .training_run_record import (
+    BestEpoch,
+    EpochRecord,
+    HeldOutTest,
+    ReliabilityBin,
+    TrainingRunRecord,
+    best_epoch,
+    build_training_run_record,
+    load_training_run_record,
+    write_training_run_record,
 )
 
 __all__ = [
+    "BestEpoch",
+    "Calibration",
+    "Decision",
+    "EgmClassModelMetadata",
     "EpochRecord",
+    "HeldOutTest",
+    "HybridEvalMetrics",
+    "IafdbOnly",
+    "Input",
+    "Mixed",
+    "ModelArtifact",
+    "NoiseBankRunRecord",
+    "Output",
+    "PerTraceProvenance",
+    "Preprocessing",
+    "Producer",
+    "ReliabilityBin",
+    "Selection",
+    "ThresholdMode",
+    "TrainingMetricsRow",
+    "TrainingRunRecord",
+    "Windowing",
+    "best_epoch",
+    "build_egm_class_model_metadata",
+    "build_hybrid_eval_metrics",
     "build_noise_bank_run_record",
-    "load_metrics_csv",
+    "build_training_run_record",
+    "load_egm_class_model_metadata",
+    "load_hybrid_eval_metrics",
     "load_noise_bank_run_record",
-    "load_run_record",
+    "load_training_metrics",
+    "load_training_run_record",
+    "write_egm_class_model_metadata",
     "write_hybrid_eval_metrics",
-    "write_metrics_csv",
-    "write_model_metadata",
     "write_noise_bank_run_record",
-    "write_run_record",
+    "write_training_metrics",
+    "write_training_run_record",
 ]
