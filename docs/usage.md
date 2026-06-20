@@ -102,9 +102,10 @@ the white paper's methods section open it. Convention is matching
 name stem in the same directory (`foo_noise.h5` ↔
 `foo_noise_run_record.json`).
 
-The builder mirrors `build_run_record`: it stamps `schema_version`
-and `created_utc` automatically and takes substantive fields by
-keyword.
+The builder stamps `schema_version` and `created_utc` automatically
+and takes substantive fields by keyword. It returns a typed
+`NoiseBankRunRecord` Pydantic model (from `myocard-egm-contracts`);
+the writer takes that model directly.
 
 ```python
 from myocard_egm_data.records import (
@@ -113,7 +114,7 @@ from myocard_egm_data.records import (
     write_noise_bank_run_record,
 )
 
-doc = build_noise_bank_run_record(
+record = build_noise_bank_run_record(
     source="iafdb v1.0.0",
     fs_hz=1000.0,
     window_ms=512.0,
@@ -134,16 +135,127 @@ doc = build_noise_bank_run_record(
         "calibration_scalar": [...],
     },
 )
-write_noise_bank_run_record("out/iafdb_noise_v1_run_record.json", doc)
+write_noise_bank_run_record("out/iafdb_noise_v1_run_record.json", record)
 
-# Round-trip:
+# Round-trip — load_* returns the typed NoiseBankRunRecord, not a dict.
 again = load_noise_bank_run_record("out/iafdb_noise_v1_run_record.json")
+assert again.calibration.method == "r_wave_anchoring"
+assert again.windowing.window_samples == 512
 ```
 
 Per-trace provenance is optional — producers building small test
 fixtures can omit it; producers building anything paper-citable
 should include it so future audits can answer "where did segment i
 come from?" without going back to the upstream dataset.
+
+### Build and read a training_run_record (the trainer's run.json)
+
+The training-run record is the full, versioned per-run artifact
+the trainer writes at end of training: schema version, run metadata,
+the resolved training config, per-epoch records, the best epoch by
+the configured selection metric, and an optional held-out test
+block. The builder takes a list of typed `EpochRecord` instances and
+returns a typed `TrainingRunRecord`:
+
+```python
+from myocard_egm_data.records import (
+    EpochRecord,
+    ReliabilityBin,
+    build_training_run_record,
+    load_training_run_record,
+    write_training_run_record,
+)
+
+epochs = [
+    EpochRecord(
+        epoch=1, lr=1e-3, train_loss=0.5, val_loss=0.45, epoch_seconds=12.0,
+        val_metrics={"auroc": 0.85, "accuracy": 0.80, "f1": 0.79, "ece": 0.05},
+        val_reliability=[
+            ReliabilityBin(lo=0.0, hi=0.5, count=10, confidence=0.25, accuracy=0.20),
+            ReliabilityBin(lo=0.5, hi=1.0, count=10, confidence=0.75, accuracy=0.80),
+        ],
+    ),
+    # ... one EpochRecord per epoch
+]
+
+record = build_training_run_record(
+    config={"input_length": 512, "batch_size": 64, "lr": 1e-3},
+    run_meta={"run_id": "v1-baseline", "git_sha": "abc1234", "host": "workstation"},
+    epoch_records=epochs,
+    select_metric="auroc",
+    test_loss=0.40,
+    test_metrics={"auroc": 0.86, "accuracy": 0.81, "reliability": []},
+)
+write_training_run_record("out/run.json", record)
+
+# Round-trip — load_* returns the typed TrainingRunRecord.
+loaded = load_training_run_record("out/run.json")
+assert loaded.best.epoch == 1  # BestEpoch instance
+assert loaded.test.loss == 0.40  # HeldOutTest instance
+```
+
+The companion `write_training_metrics` flattens those same epoch
+records into `metrics.csv`:
+
+```python
+from myocard_egm_data.records import (
+    load_training_metrics,
+    write_training_metrics,
+)
+
+write_training_metrics("out/metrics.csv", epochs)
+rows = load_training_metrics("out/metrics.csv")
+assert rows[0].epoch == 1 and rows[0].val_auroc == 0.85
+```
+
+`training_metrics` has no `build_*` helper because the schema
+describes one CSV row — the file is the concatenation of N rows
+with a header, and the row's fields all come from the source
+`EpochRecord`s directly.
+
+### Build and read an egm_class_model_metadata sidecar
+
+The EGM-classifier `model_metadata.json` sidecar pairs with a deployed
+model artifact (typically the ONNX export). It captures the
+deployment-time constants the inference runtime needs — sample rate,
+trace length, per-channel normalization, decision threshold, model
+artifact hash, training provenance. The schema is specific to the
+1-D EGM-classifier family; future 2-D electrode-grid or sparse-3-D
+electrode models get their own per-topology schemas.
+
+```python
+from myocard_egm_data.records import (
+    build_egm_class_model_metadata,
+    load_egm_class_model_metadata,
+    write_egm_class_model_metadata,
+)
+
+record = build_egm_class_model_metadata(
+    model_artifact={
+        "filename": "best.onnx",
+        "framework": "onnx",
+        "sha256": "a" * 64,
+    },
+    input_spec={"name": "signal", "shape": ["?", 1, 512], "dtype": "float32"},
+    output_spec={
+        "name": "logit", "shape": ["?", 1], "dtype": "float32",
+        "semantics": "binary_logit",
+    },
+    preprocessing={
+        "expected_fs_hz": 1000.0,
+        "expected_trace_samples": 512,
+        "bandpass_hz": [30.0, 300.0],
+        "normalization": {"scheme": "zscore", "mean": [0.0], "std": [1.0]},
+    },
+    decision={"threshold": 0.5, "class_labels": ["healthy", "fibrotic"]},
+    training_provenance={"run_id": "v1-baseline", "training_bank_path": "data/hybrid_v1.h5"},
+)
+write_egm_class_model_metadata("out/best.model_metadata.json", record)
+```
+
+Each sub-block accepts either a typed Pydantic instance (e.g. a
+`ModelArtifact` pulled from a registry) or a plain dict — Pydantic
+validates dicts into the nested sub-models at construction time.
 
 ### Combine multiple banks into a hybrid bank
 
@@ -226,8 +338,8 @@ from `label_truth=0`.
 
 | Module | What's in it |
 |---|---|
-| `myocard_egm_data.banks` | `ClassifierBank` + per-trace types, converters from Pydantic SyntheticBank / IafdbBank, `read_*_hdf5` Pydantic readers (synthetic / iafdb / noise), `write_*` Pydantic writers (synthetic / iafdb / noise), ClassifierBank HDF5 I/O |
-| `myocard_egm_data.records` | run.json / metrics.csv / hybrid_eval_metrics.json / model_metadata.json / noise_bank_run_record.json writers and readers, plus `build_noise_bank_run_record` and `build_run_record` builders |
+| `myocard_egm_data.banks` | `ClassifierBank` + per-trace types, converters from Pydantic `SyntheticBank` / `IafdbBank`, `read_*_hdf5` Pydantic readers (synthetic / iafdb / noise), `write_*` Pydantic writers (synthetic / iafdb / noise), ClassifierBank HDF5 I/O |
+| `myocard_egm_data.records` | One per-file module per schema, mirroring the per-schema layout in `myocard-egm-contracts._generated.python`: `training_run_record` (run.json), `training_metrics` (metrics.csv), `hybrid_eval_metrics` (mixed eval summary), `egm_class_model_metadata` (1-D EGM-classifier inference sidecar), `noise_bank_run_record` (noise-bank provenance sidecar). Each module owns `build_*` (where applicable) + `write_*` + `load_*` and re-exports its Pydantic models |
 | `myocard_egm_data.splits` | `patient_aware_split` (numpy-array level) and `split_classifier_bank` / `apply_split_indices` (ClassifierBank-level) |
 | `myocard_egm_data.augmentation` | `TraceTransform` — per-trace normalize + pad + augment, used in the DataLoader pipeline |
 | `myocard_egm_data.datasets` | PyTorch `Dataset` wrappers and `build_dataloaders` (requires `[torch]` extra) |
@@ -236,10 +348,12 @@ from `label_truth=0`.
 
 - For the on-disk ClassifierBank format details:
   `project/classifier_bank_format.md`.
-- For schema definitions (synthetic_bank, iafdb_bank, noise_bank,
-  noise_bank_run_record, run_record, metrics, hybrid_eval_metrics,
-  model_metadata): the JSON Schema files in `myocard-egm-contracts`,
-  with prose companions under `docs/schemas/`.
+- For schema definitions — `synthetic_bank`, `iafdb_bank`,
+  `noise_bank`, `noise_bank_run_record`, `training_run_record`,
+  `training_metrics`, `hybrid_eval_metrics`,
+  `egm_class_model_metadata` — see the JSON Schema files in
+  `myocard-egm-contracts`, with prose companions under
+  `docs/schemas/`.
 - For the noise_bank ↔ noise_bank_run_record pairing convention and
   the reason the bank schema is intentionally minimal: the
   `noise_bank` and `noise_bank_run_record` entries under

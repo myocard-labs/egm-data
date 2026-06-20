@@ -12,8 +12,8 @@ The on-disk formats (HDF5 banks, JSON run records, CSV metrics, etc.) are owned 
 
 What this package contains:
 
-- **Bank readers and writers** for the two HDF5 schemas — `synthetic_bank` (clean or hybrid clean+noise EGMs) and `iafdb_healthy_bank` (calibrated + band-passed segments). The reader auto-detects which schema a file conforms to.
-- **Record readers and writers** for the JSON / CSV training artifacts — `run.json`, `metrics.csv`, `predictions_<eval_name>.{json,csv}`, `hybrid_eval_metrics.json`, and `model_metadata.json`.
+- **Bank readers and writers** for the HDF5 schemas — `synthetic_bank` (clean or noise-mixed EGMs), `iafdb_bank` (calibrated + band-passed segments), and `noise_bank` (low-amplitude windows used as additive noise by the synthetic mixer). Source-specific Pydantic models from `egm-contracts` get converted into the unified in-memory `ClassifierBank`.
+- **Record readers and writers** for the JSON / CSV training and evaluation artifacts — `training_run_record` (run.json), `training_metrics` (metrics.csv), `hybrid_eval_metrics` (mixed synthetic + IAFDB eval summary), `egm_class_model_metadata` (inference-side model metadata for the 1-D EGM-classifier family), and `noise_bank_run_record` (extraction provenance sidecar for a noise bank). Every `build_*` returns a typed Pydantic model; every `write_*` accepts one; every `load_*` returns one.
 - **PyTorch `Dataset` wrappers** including the `TraceTransform` per-trace normalize+pad+augment pipeline, the patient-aware split, and a `build_dataloaders` convenience that ties banks + splits + datasets together.
 
 Schema versioning lives in `myocard-egm-contracts`; this package is the thin I/O layer over those schemas.
@@ -48,19 +48,27 @@ pre-commit install
 ## Programmatic usage
 
 ```python
-from myocard_egm_data.banks import load_bank, write_synthetic_bank
-from myocard_egm_data.records import write_run_record
+from myocard_egm_data.banks import load_synthetic_bank_as_classifier
+from myocard_egm_data.records import build_training_run_record, write_training_run_record
 from myocard_egm_data.datasets import build_dataloaders
 
-# Auto-detects synthetic vs IAFDB schema.
-bank = load_bank("data/hybrid_v1.h5")
-print(bank.n_traces, bank.n_samples, bank.schema)
+# Load a synthetic bank and convert it to the unified ClassifierBank.
+cb = load_synthetic_bank_as_classifier("data/hybrid_v1.h5")
+print(cb.n_traces, cb.n_samples_first)
 
 # Patient-aware split + per-trace transform + DataLoader, all in one call.
-bundle = build_dataloaders("data/hybrid_v1.h5", batch_size=64)
+bundle = build_dataloaders(cb, input_length=512, batch_size=64, ...)
 for x, y in bundle.train:
     ...
+
+# At end of training, write the run record as a typed Pydantic model.
+record = build_training_run_record(
+    config=..., run_meta=..., epoch_records=[...], select_metric="auroc",
+)
+write_training_run_record("out/run.json", record)
 ```
+
+See [docs/usage.md](docs/usage.md) for full walkthroughs of the per-schema build/write/load helpers.
 
 The bank, record, splits, and augmentation packages do not import torch. Only `myocard_egm_data.datasets` does — a notebook or viewer can install without it.
 
