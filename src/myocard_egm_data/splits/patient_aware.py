@@ -8,10 +8,16 @@ train and val, which inflates val metrics — a failure mode that has
 burned multiple cardiology-ML papers. Splitting by patient closes that
 leak.
 
-We additionally *stratify* by per-patient label so the (typically
-imbalanced) class ratio is preserved across the three splits. Without
-this, a small dataset can land all healthy patients in one split by
-chance.
+We additionally *stratify* by a per-patient key chosen by a
+:class:`PatientStratificationStrategy` so the (typically imbalanced)
+class ratio is preserved across the three splits. Without
+stratification, a small dataset can land all healthy patients in one
+split by chance.
+
+The strategy is pluggable: callers pick whichever stratification key
+makes sense for their bank's labeling scheme. See
+:mod:`myocard_egm_data.splits.strategies` for the shipped strategies
+and instructions on adding new ones.
 """
 
 from __future__ import annotations
@@ -19,6 +25,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+
+from .strategies import AnyPositiveStrategy, PatientStratificationStrategy
 
 
 @dataclass(frozen=True)
@@ -31,18 +39,6 @@ class SplitIndices:
 
     def as_dict(self) -> dict[str, np.ndarray]:
         return {"train": self.train, "val": self.val, "test": self.test}
-
-
-def _patient_label(simulation_id: np.ndarray, labels: np.ndarray, pid: int) -> int:
-    """The label shared by every trace of a patient (asserts consistency)."""
-    pid_labels = labels[simulation_id == pid]
-    uniq = np.unique(pid_labels)
-    if uniq.size != 1:
-        raise ValueError(
-            f"simulation_id={pid} has mixed labels {uniq.tolist()}; the "
-            "binary label is supposed to be constant within a patient."
-        )
-    return int(uniq[0])
 
 
 def _allocate(n_patients: int, fractions: tuple[float, float, float]) -> tuple[int, int, int]:
@@ -66,19 +62,26 @@ def patient_aware_split(
     labels: np.ndarray,
     fractions: tuple[float, float, float],
     seed: int,
+    strategy: PatientStratificationStrategy | None = None,
 ) -> SplitIndices:
-    """Split trace rows into train/val/test by patient, stratified by label.
+    """Split trace rows into train/val/test by patient, stratified by ``strategy``.
 
     Parameters
     ----------
     simulation_id
-        ``[N]`` patient id per trace.
+        ``[N]`` patient id per trace (integer-factorized upstream).
     labels
-        ``[N]`` binary label per trace (must be constant within a patient).
+        ``[N]`` integer label per trace. The strategy decides how to
+        derive a per-patient stratification key from this.
     fractions
         ``(train, val, test)`` patient fractions; must sum to ~1.
     seed
         RNG seed for the patient shuffle (reproducible splits).
+    strategy
+        How to bucket patients for stratification. ``None`` defaults to
+        :class:`~myocard_egm_data.splits.strategies.AnyPositiveStrategy`
+        — one bit per patient (1 if any trace is positive, else 0),
+        which recovers the original behavior on global-density banks.
 
     Returns
     -------
@@ -86,19 +89,21 @@ def patient_aware_split(
     """
     if abs(sum(fractions) - 1.0) > 1e-6:
         raise ValueError(f"fractions must sum to 1, got {fractions} (sum {sum(fractions)}).")
+    if strategy is None:
+        strategy = AnyPositiveStrategy()
     rng = np.random.default_rng(seed)
 
     patients = np.unique(simulation_id)
-    by_label: dict[int, list[int]] = {}
+    by_stratum: dict[int, list[int]] = {}
     for pid in patients:
-        lbl = _patient_label(simulation_id, labels, int(pid))
-        by_label.setdefault(lbl, []).append(int(pid))
+        key = strategy.stratum(simulation_id, labels, int(pid))
+        by_stratum.setdefault(key, []).append(int(pid))
 
     train_pids: list[int] = []
     val_pids: list[int] = []
     test_pids: list[int] = []
-    for lbl in sorted(by_label):
-        group = np.array(by_label[lbl])
+    for key in sorted(by_stratum):
+        group = np.array(by_stratum[key])
         rng.shuffle(group)
         n_train, n_val, _n_test = _allocate(group.size, fractions)
         train_pids.extend(group[:n_train].tolist())
