@@ -24,6 +24,7 @@ import numpy as np
 
 from ..banks import ClassifierBank
 from .patient_aware import SplitIndices, patient_aware_split
+from .strategies import PatientStratificationStrategy
 
 
 def split_classifier_bank(
@@ -32,6 +33,7 @@ def split_classifier_bank(
     fractions: tuple[float, float, float],
     seed: int,
     split_names: tuple[str, str, str] = ("train", "val", "test"),
+    strategy: PatientStratificationStrategy | None = None,
 ) -> SplitIndices:
     """Run a patient-aware split and tag every trace's ``split`` field.
 
@@ -43,6 +45,10 @@ def split_classifier_bank(
     corresponding name from ``split_names``. Also returns the
     :class:`SplitIndices` so the caller can use the row indices
     directly without iterating the bank.
+
+    ``strategy`` chooses how patients are bucketed for stratification;
+    defaults to :class:`AnyPositiveStrategy` when ``None``. See
+    :mod:`myocard_egm_data.splits.strategies` for the trade-offs.
     """
     patient_id = bank.patient_id_array()
     labels = bank.label_truth_array()
@@ -52,7 +58,7 @@ def split_classifier_bank(
     _, group_id = np.unique(patient_id, return_inverse=True)
     group_id = group_id.astype(np.int64)
 
-    split = patient_aware_split(group_id, labels, fractions=fractions, seed=seed)
+    split = patient_aware_split(group_id, labels, fractions=fractions, seed=seed, strategy=strategy)
     apply_split_indices(bank, split, split_names=split_names)
     return split
 

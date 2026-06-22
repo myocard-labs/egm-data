@@ -19,6 +19,7 @@ time, not here.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -28,7 +29,7 @@ from torch.utils.data import DataLoader
 
 from ..augmentation import TraceTransform
 from ..banks import ClassifierBank
-from ..splits import patient_aware_split
+from ..splits import PatientStratificationStrategy, patient_aware_split
 from .trace_dataset import EGMTraceDataset
 
 _TrainBatch = tuple[torch.Tensor, torch.Tensor]
@@ -65,6 +66,7 @@ def build_dataloaders(
     split_seed: int,
     dataset_seed: int,
     pin_memory: bool,
+    split_strategy: PatientStratificationStrategy | None = None,
 ) -> LoaderBundle:
     """Build train/val/test loaders with a patient-aware split.
 
@@ -81,11 +83,27 @@ def build_dataloaders(
         for the multi-class head when False.
     augment_train
         Apply gain + time-shift augmentation to the train split only.
+    split_strategy
+        Per-patient stratification strategy passed to
+        :func:`~myocard_egm_data.splits.patient_aware_split`. ``None``
+        defaults to the upstream default (``AnyPositiveStrategy``), which
+        works for both global-density and local-density banks. Pass
+        ``BinnedDensityStrategy(n_bins=...)`` for finer-grained
+        stratification under heavy local-density skew.
 
     Returns
     -------
     LoaderBundle with ``.train``/``.val``/``.test`` loaders and an
-    ``.info`` dict (split sizes, class counts, pos_weight, etc.).
+    ``.info`` dict carrying split sizes, per-split class counts,
+    pos_weight, and the bank's schema version.
+
+    Warnings
+    --------
+    On a binary task, emits a :class:`UserWarning` when the val or test
+    split lands single-class. AUROC and the related rank metrics are
+    undefined in that case (torchmetrics returns zero and prints its own
+    warning); the message here points the user at split_fractions and
+    ``split_strategy`` as the typical fixes.
     """
     if bank.n_traces == 0:
         raise ValueError("build_dataloaders: ClassifierBank is empty.")
@@ -99,7 +117,13 @@ def build_dataloaders(
     _, group_id = np.unique(patient_id, return_inverse=True)
     group_id = group_id.astype(np.int64)
 
-    split = patient_aware_split(group_id, labels, fractions=split_fractions, seed=split_seed)
+    split = patient_aware_split(
+        group_id,
+        labels,
+        fractions=split_fractions,
+        seed=split_seed,
+        strategy=split_strategy,
+    )
 
     label_dtype = torch.float32 if binary else torch.long
     train_tf = TraceTransform(
@@ -164,11 +188,22 @@ def build_dataloaders(
     # BCE pos_weight = (#neg / #pos) on the train split, to counter the
     # typical fibrosis-class imbalance. 1.0 if a class is absent (degenerate
     # small bank).
-    train_labels = labels[split.train]
-    counts = _class_counts(train_labels)
-    n_pos = counts.get(1, 0)
-    n_neg = counts.get(0, 0)
+    train_counts = _class_counts(labels[split.train])
+    val_counts = _class_counts(labels[split.val])
+    test_counts = _class_counts(labels[split.test])
+    n_pos = train_counts.get(1, 0)
+    n_neg = train_counts.get(0, 0)
     pos_weight = (n_neg / n_pos) if n_pos > 0 else 1.0
+
+    # Single-class val / test on a binary task makes AUROC undefined and
+    # the related rank metrics meaningless. Warn loudly so the user can
+    # spot the problem before sinking compute into a useless run. We
+    # don't raise — the user may still want to inspect train-side
+    # behavior on a known-degenerate split — but the message tells them
+    # what's wrong and how to fix it.
+    if binary:
+        _warn_if_single_class("val", val_counts)
+        _warn_if_single_class("test", test_counts)
 
     info: dict[str, Any] = {
         "bank_schema_version": bank.schema_version,
@@ -186,8 +221,35 @@ def build_dataloaders(
             "val": int(np.unique(group_id[split.val]).size),
             "test": int(np.unique(group_id[split.test]).size),
         },
-        "train_class_counts": counts,
+        "train_class_counts": train_counts,
+        "val_class_counts": val_counts,
+        "test_class_counts": test_counts,
         "pos_weight": float(pos_weight),
         "binary": binary,
     }
     return LoaderBundle(train=train_loader, val=val_loader, test=test_loader, info=info)
+
+
+def _warn_if_single_class(split_name: str, counts: dict[int, int]) -> None:
+    """Emit a UserWarning when a binary split has zero of either class.
+
+    Empty splits are skipped (size==0 means no warning to issue — that's
+    handled by the loaders' own emptiness checks). A non-empty split
+    with only one class present triggers the warning; the message
+    includes the actual counts and points the user at the typical fixes.
+    """
+    if not counts or sum(counts.values()) == 0:
+        return
+    classes_present = {c for c, n in counts.items() if n > 0}
+    if len(classes_present) >= 2:
+        return
+    warnings.warn(
+        f"build_dataloaders: {split_name} split is single-class "
+        f"(counts={counts}). AUROC and related rank metrics will be "
+        "undefined (torchmetrics will return zero). Increase the bank "
+        "size, raise the val/test fraction in split_fractions, or "
+        "switch split_strategy (e.g. BinnedDensityStrategy) for a "
+        "finer-grained patient stratification.",
+        UserWarning,
+        stacklevel=2,
+    )

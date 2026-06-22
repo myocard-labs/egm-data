@@ -7,8 +7,16 @@ from .patient_aware import (
     SplitIndices,
     patient_aware_split,
 )
+from .strategies import (
+    AnyPositiveStrategy,
+    BinnedDensityStrategy,
+    PatientStratificationStrategy,
+)
 
 __all__ = [
+    "AnyPositiveStrategy",
+    "BinnedDensityStrategy",
+    "PatientStratificationStrategy",
     "SplitIndices",
     "apply_split_indices",
     "patient_aware_split",

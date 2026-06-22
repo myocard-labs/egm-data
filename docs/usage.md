@@ -290,6 +290,52 @@ The splitter reads `patient_id` from each trace's `trace_metadata`. If
 your custom `bank_type` doesn't follow that convention, populate the
 key before calling.
 
+#### Stratification strategies
+
+Patient-aware splitting has two responsibilities. **Non-leakage** — every
+trace from one patient lands in exactly one split — is hard-coded and
+not negotiable. **Stratification** — keeping the class ratio roughly
+even across splits so a small bank doesn't accidentally land all
+positives in one split — is pluggable via a strategy object.
+
+Two strategies ship in `myocard_egm_data.splits.strategies`:
+
+- `AnyPositiveStrategy` *(default)* — the per-patient stratum is `1`
+  if any trace is positive, else `0`. On a global-density-labelled
+  bank (one binary label per simulation) this recovers the original
+  per-patient-label stratifier exactly. On a local-density-labelled
+  bank (different bipolar pairs within one simulation get different
+  labels), it stratifies *patients-with-substrate* vs
+  *patients-without-substrate*. Coarse but correct under both
+  labelling schemes.
+- `BinnedDensityStrategy(n_bins=3)` — buckets each patient's positive
+  rate into `n_bins` equal-width bins over `[0, 1]`. Finer-grained
+  under local-density skew; useful when `AnyPositiveStrategy` still
+  produces trace-class-imbalanced val/test (the built-in diagnostic
+  warns when that happens).
+
+Both strategies degenerate to the same behavior on global-density banks
+(every patient's positive rate is exactly 0 or 1), so swapping strategy
+choice mid-experiment doesn't disturb existing baselines.
+
+Pass an explicit strategy to opt out of the default:
+
+```python
+from myocard_egm_data.splits import BinnedDensityStrategy, split_classifier_bank
+
+indices = split_classifier_bank(
+    hybrid,
+    fractions=(0.8, 0.1, 0.1),
+    seed=42,
+    strategy=BinnedDensityStrategy(n_bins=3),
+)
+```
+
+Adding a new strategy is one file in `splits/strategies/` plus a
+re-export — see the package docstring. The protocol is structural
+(any frozen dataclass with `stratum(simulation_id, labels, pid) -> int`
+satisfies it).
+
 ### Build training DataLoaders
 
 ```python
@@ -320,6 +366,27 @@ Every kwarg is required — the library ships no defaults for training
 policy. The classifier code (`egm-classifier`) holds these in its own
 config layer.
 
+`bundle.info` carries per-split diagnostics — train / val / test
+sizes, per-split class counts, the train-derived BCE `pos_weight`, and
+the source bank's schema version. On a binary task, `build_dataloaders`
+emits a `UserWarning` when val or test ends up single-class (AUROC and
+related rank metrics are undefined in that case); the warning message
+points at `split_fractions`, bank size, and `split_strategy` as the
+typical fixes.
+
+To use a non-default stratification strategy (see the previous
+section), pass `split_strategy`:
+
+```python
+from myocard_egm_data.splits import BinnedDensityStrategy
+
+bundle = build_dataloaders(
+    hybrid,
+    # ... all the other kwargs ...
+    split_strategy=BinnedDensityStrategy(n_bins=3),
+)
+```
+
 ### Save and load a ClassifierBank
 
 ```python
@@ -340,7 +407,7 @@ from `label_truth=0`.
 |---|---|
 | `myocard_egm_data.banks` | `ClassifierBank` + per-trace types, converters from Pydantic `SyntheticBank` / `IafdbBank`, `read_*_hdf5` Pydantic readers (synthetic / iafdb / noise), `write_*` Pydantic writers (synthetic / iafdb / noise), ClassifierBank HDF5 I/O |
 | `myocard_egm_data.records` | One per-file module per schema, mirroring the per-schema layout in `myocard-egm-contracts._generated.python`: `training_run_record` (run.json), `training_metrics` (metrics.csv), `hybrid_eval_metrics` (mixed eval summary), `egm_class_model_metadata` (1-D EGM-classifier inference sidecar), `noise_bank_run_record` (noise-bank provenance sidecar). Each module owns `build_*` (where applicable) + `write_*` + `load_*` and re-exports its Pydantic models |
-| `myocard_egm_data.splits` | `patient_aware_split` (numpy-array level) and `split_classifier_bank` / `apply_split_indices` (ClassifierBank-level) |
+| `myocard_egm_data.splits` | `patient_aware_split` (numpy-array level) and `split_classifier_bank` / `apply_split_indices` (ClassifierBank-level) plus the `strategies/` subpackage (`AnyPositiveStrategy`, `BinnedDensityStrategy`, `PatientStratificationStrategy` Protocol) for pluggable per-patient stratification |
 | `myocard_egm_data.augmentation` | `TraceTransform` — per-trace normalize + pad + augment, used in the DataLoader pipeline |
 | `myocard_egm_data.datasets` | PyTorch `Dataset` wrappers and `build_dataloaders` (requires `[torch]` extra) |
 
