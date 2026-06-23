@@ -3,18 +3,20 @@
 The schema (``myocard_egm_contracts.egm_class_model_metadata``)
 captures everything an inference runtime needs that the ONNX graph
 itself does not encode: expected sample rate, expected trace length,
-per-channel normalization, decision threshold, model artifact hash,
-training provenance.
+per-trace normalization scheme, decision threshold, model artifact
+hash, training provenance.
 
 Cross-language consumer: Python (training-eval parity checks) and
 C++ (TensorRT inference). Lives next to the model artifact on disk
 (e.g. ``best.onnx`` + ``best.model_metadata.json``).
 
 This schema is intentionally specific to the 1-D EGM-classifier
-family — the ``[B, 1, T]`` input, ``binary_logit`` output semantics,
-and single-channel bandpass preprocessing don't generalize to 2-D
-electrode-grid CNNs or sparse 3-D electrode point-cloud models, which
-will get their own per-topology schemas.
+family — the ``[B, 1, T]`` input (middle ``1`` is the channel axis
+required by PyTorch ``Conv1d``, not a multi-channel slot),
+``binary_logit`` output semantics, and single-channel bandpass
+preprocessing don't generalize to 2-D electrode-grid CNNs or sparse
+3-D electrode point-cloud models, which will get their own
+per-topology schemas.
 """
 
 from __future__ import annotations

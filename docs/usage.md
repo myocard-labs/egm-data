@@ -218,10 +218,10 @@ with a header, and the row's fields all come from the source
 The EGM-classifier `model_metadata.json` sidecar pairs with a deployed
 model artifact (typically the ONNX export). It captures the
 deployment-time constants the inference runtime needs — sample rate,
-trace length, per-channel normalization, decision threshold, model
-artifact hash, training provenance. The schema is specific to the
-1-D EGM-classifier family; future 2-D electrode-grid or sparse-3-D
-electrode models get their own per-topology schemas.
+trace length, per-trace normalization scheme, decision threshold,
+model artifact hash, training provenance. The schema is specific to
+the 1-D EGM-classifier family; future 2-D electrode-grid or
+sparse-3-D electrode models get their own per-topology schemas.
 
 ```python
 from myocard_egm_data.records import (
@@ -245,7 +245,7 @@ record = build_egm_class_model_metadata(
         "expected_fs_hz": 1000.0,
         "expected_trace_samples": 512,
         "bandpass_hz": [30.0, 300.0],
-        "normalization": {"scheme": "zscore", "mean": [0.0], "std": [1.0]},
+        "normalization": {"scheme": "zscore"},
     },
     decision={"threshold": 0.5, "class_labels": ["healthy", "fibrotic"]},
     training_provenance={"run_id": "v1-baseline", "training_bank_path": "data/hybrid_v1.h5"},
