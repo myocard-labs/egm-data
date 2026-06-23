@@ -306,7 +306,7 @@ def test_egm_class_model_metadata_round_trip(tmp_path: Path) -> None:
             "expected_fs_hz": 1000.0,
             "expected_trace_samples": 512,
             "bandpass_hz": [30.0, 300.0],
-            "normalization": {"scheme": "zscore", "mean": [0.0], "std": [1.0]},
+            "normalization": {"scheme": "zscore"},
         },
         decision={
             "threshold": 0.5,
