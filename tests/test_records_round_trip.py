@@ -1,6 +1,6 @@
 """Round-trip the record writers/readers against the contracts' validators.
 
-Covers training_run_record / training_metrics / hybrid_eval_metrics /
+Covers training_run_record / training_metrics /
 egm_class_model_metadata / noise_bank_run_record. Per-trace predictions
 live inside ClassifierBank now — covered by test_banks_round_trip.py.
 
@@ -18,7 +18,6 @@ from pathlib import Path
 
 from myocard_egm_contracts.validators import (
     validate_egm_class_model_metadata,
-    validate_hybrid_eval_metrics,
     validate_noise_bank_run_record,
     validate_training_metrics,
     validate_training_run_record,
@@ -27,13 +26,11 @@ from myocard_egm_contracts.validators import (
 from myocard_egm_data.records import (
     EgmClassModelMetadata,
     EpochRecord,
-    HybridEvalMetrics,
     NoiseBankRunRecord,
     ReliabilityBin,
     TrainingMetricsRow,
     TrainingRunRecord,
     build_egm_class_model_metadata,
-    build_hybrid_eval_metrics,
     build_noise_bank_run_record,
     build_training_run_record,
     load_noise_bank_run_record,
@@ -41,7 +38,6 @@ from myocard_egm_data.records import (
     load_training_run_record,
     make_epoch_record,
     write_egm_class_model_metadata,
-    write_hybrid_eval_metrics,
     write_noise_bank_run_record,
     write_training_metrics,
     write_training_run_record,
@@ -228,49 +224,6 @@ def test_training_metrics_null_round_trip(tmp_path: Path) -> None:
 # Per-trace predictions interchange has been retired from records — the
 # ClassifierBank format carries them. See test_banks_round_trip.py for
 # the prediction-round-trip coverage.
-
-
-# ---------------------------------------------------------------------------
-# hybrid_eval_metrics
-# ---------------------------------------------------------------------------
-
-
-def test_hybrid_eval_metrics_round_trip(tmp_path: Path) -> None:
-    """Hybrid (mixed synthetic + IAFDB) eval summary builds a typed
-    HybridEvalMetrics, writes a document the contracts' validator
-    accepts. Confirms the schema-required ``mixed`` and ``iafdb_only``
-    blocks have the right nested shapes when passed as dicts (Pydantic
-    auto-validates them into the typed sub-models)."""
-    record = build_hybrid_eval_metrics(
-        producer={
-            "run_id": "test-run-001",
-            "model_checkpoint": "checkpoints/v1/best.pt",
-        },
-        mixed={
-            "n": 100,
-            "n_positives": 50,
-            "n_negatives": 50,
-            "metrics": {
-                "auroc": 0.85,
-                "accuracy": 0.80,
-                "precision": 0.81,
-                "recall": 0.78,
-                "f1": 0.79,
-            },
-        },
-        iafdb_only={
-            "n": 40,
-            "mean_prob_fibrotic": 0.22,
-            "fpr_at_0_5": 0.18,
-        },
-    )
-    assert isinstance(record, HybridEvalMetrics)
-
-    path = tmp_path / "hybrid_eval_metrics.json"
-    write_hybrid_eval_metrics(path, record)
-
-    result = validate_hybrid_eval_metrics(path)
-    assert result.ok, result.issues
 
 
 # ---------------------------------------------------------------------------

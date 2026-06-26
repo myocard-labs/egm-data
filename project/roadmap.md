@@ -25,8 +25,8 @@ for the per-subpackage contract):
   `Protocol` (added in the v0.2.x bank-type redesign).
 - **`records/`** — readers + writers for the JSON / CSV records:
   `training_run_record` (`run.json`), `training_metrics`
-  (`metrics.csv` per-epoch rows), `hybrid_eval_metrics`,
-  `egm_class_model_metadata`. Records are Pydantic-model-in /
+  (`metrics.csv` per-epoch rows), `egm_class_model_metadata`.
+  Records are Pydantic-model-in /
   Pydantic-model-out — readers return typed contracts models;
   writers take typed contracts models.
 - **`datasets/`** — `EGMTraceDataset` (PyTorch `Dataset` over a
