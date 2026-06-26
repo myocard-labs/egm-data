@@ -159,7 +159,7 @@ class ClassifierBankMetaData:
     """Bank-level provenance for one source bank that contributed traces.
 
     A ClassifierBank can carry traces from multiple source banks
-    (synthetic + IAFDB to form a hybrid eval, etc.). Each
+    (for example a synthetic bank combined with an IAFDB bank). Each
     ClassifierTrace references its source via ``bank_id`` which is the
     index into :attr:`ClassifierBank.banks`.
 

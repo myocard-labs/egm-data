@@ -2,8 +2,8 @@
 
 Strictly internal to ``records/`` — not re-exported from ``__init__.py``.
 Schema-specific build/write/load logic lives in the per-schema files
-(``run_record.py``, ``metrics.py``, ``hybrid_eval_metrics.py``,
-``model_metadata.py``, ``noise_bank_run_record.py``); this module owns
+(``run_record.py``, ``metrics.py``, ``model_metadata.py``,
+``noise_bank_run_record.py``); this module owns
 only the cross-schema plumbing they all share:
 
 - ISO-8601 UTC timestamp helper (every ``build_*`` stamps one).

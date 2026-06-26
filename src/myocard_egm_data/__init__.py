@@ -8,8 +8,8 @@ This package owns:
   bank.
 - **Record readers/writers** (``records.readers`` / ``records.writers``) for
   the JSON / CSV training and evaluation artifacts: ``run.json``,
-  ``metrics.csv``, ``predictions_<split>.{json,csv}``,
-  ``hybrid_eval_metrics.json``, and ``model_metadata.json``.
+  ``metrics.csv``, ``predictions_<split>.{json,csv}``, and
+  ``model_metadata.json``.
 - **PyTorch ``Dataset`` wrappers** (``datasets``), including the per-trace
   normalize + pad + augment transform and the patient-aware split.
 

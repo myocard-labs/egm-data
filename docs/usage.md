@@ -406,7 +406,7 @@ from `label_truth=0`.
 | Module | What's in it |
 |---|---|
 | `myocard_egm_data.banks` | `ClassifierBank` + per-trace types, converters from Pydantic `SyntheticBank` / `IafdbBank`, `read_*_hdf5` Pydantic readers (synthetic / iafdb / noise), `write_*` Pydantic writers (synthetic / iafdb / noise), ClassifierBank HDF5 I/O |
-| `myocard_egm_data.records` | One per-file module per schema, mirroring the per-schema layout in `myocard-egm-contracts._generated.python`: `training_run_record` (run.json), `training_metrics` (metrics.csv), `hybrid_eval_metrics` (mixed eval summary), `egm_class_model_metadata` (1-D EGM-classifier inference sidecar), `noise_bank_run_record` (noise-bank provenance sidecar). Each module owns `build_*` (where applicable) + `write_*` + `load_*` and re-exports its Pydantic models |
+| `myocard_egm_data.records` | One per-file module per schema, mirroring the per-schema layout in `myocard-egm-contracts._generated.python`: `training_run_record` (run.json), `training_metrics` (metrics.csv), `egm_class_model_metadata` (1-D EGM-classifier inference sidecar), `noise_bank_run_record` (noise-bank provenance sidecar). Each module owns `build_*` (where applicable) + `write_*` + `load_*` and re-exports its Pydantic models |
 | `myocard_egm_data.splits` | `patient_aware_split` (numpy-array level) and `split_classifier_bank` / `apply_split_indices` (ClassifierBank-level) plus the `strategies/` subpackage (`AnyPositiveStrategy`, `BinnedDensityStrategy`, `PatientStratificationStrategy` Protocol) for pluggable per-patient stratification |
 | `myocard_egm_data.augmentation` | `TraceTransform` — per-trace normalize + pad + augment, used in the DataLoader pipeline |
 | `myocard_egm_data.datasets` | PyTorch `Dataset` wrappers and `build_dataloaders` (requires `[torch]` extra) |
@@ -417,8 +417,7 @@ from `label_truth=0`.
   `project/classifier_bank_format.md`.
 - For schema definitions — `synthetic_bank`, `iafdb_bank`,
   `noise_bank`, `noise_bank_run_record`, `training_run_record`,
-  `training_metrics`, `hybrid_eval_metrics`,
-  `egm_class_model_metadata` — see the JSON Schema files in
+  `training_metrics`, `egm_class_model_metadata` — see the JSON Schema files in
   `myocard-egm-contracts`, with prose companions under
   `docs/schemas/`.
 - For the noise_bank ↔ noise_bank_run_record pairing convention and

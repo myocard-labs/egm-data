@@ -2,8 +2,7 @@
 
 The package owns the on-disk format for everything that is *not* a
 bank: the per-run ML training record (``run.json``), the per-epoch
-metrics table (``metrics.csv``), the hybrid eval summary
-(``hybrid_eval_metrics.json``), the EGM-classifier inference-side
+metrics table (``metrics.csv``), the EGM-classifier inference-side
 model metadata (``model_metadata.json``), and the noise-bank
 provenance sidecar (``noise_bank_run_record.json``).
 
@@ -24,9 +23,6 @@ load for that schema only, mirroring the per-schema layout in
   :class:`TrainingMetricsRow`. No ``build_*`` helper: the schema
   describes one row, the file is N rows, no per-document
   ``schema_version`` field.
-- :mod:`.hybrid_eval_metrics` — ``build_hybrid_eval_metrics``,
-  ``write_hybrid_eval_metrics``, ``load_hybrid_eval_metrics``;
-  re-exports :class:`HybridEvalMetrics` and its nested models.
 - :mod:`.egm_class_model_metadata` —
   ``build_egm_class_model_metadata``,
   ``write_egm_class_model_metadata``,
@@ -70,15 +66,6 @@ from .egm_class_model_metadata import (
     load_egm_class_model_metadata,
     write_egm_class_model_metadata,
 )
-from .hybrid_eval_metrics import (
-    HybridEvalMetrics,
-    IafdbOnly,
-    Mixed,
-    Producer,
-    build_hybrid_eval_metrics,
-    load_hybrid_eval_metrics,
-    write_hybrid_eval_metrics,
-)
 from .noise_bank_run_record import (
     Calibration,
     NoiseBankRunRecord,
@@ -115,16 +102,12 @@ __all__ = [
     "EgmClassModelMetadata",
     "EpochRecord",
     "HeldOutTest",
-    "HybridEvalMetrics",
-    "IafdbOnly",
     "Input",
-    "Mixed",
     "ModelArtifact",
     "NoiseBankRunRecord",
     "Output",
     "PerTraceProvenance",
     "Preprocessing",
-    "Producer",
     "ReliabilityBin",
     "Selection",
     "ThresholdMode",
@@ -133,17 +116,14 @@ __all__ = [
     "Windowing",
     "best_epoch",
     "build_egm_class_model_metadata",
-    "build_hybrid_eval_metrics",
     "build_noise_bank_run_record",
     "build_training_run_record",
     "load_egm_class_model_metadata",
-    "load_hybrid_eval_metrics",
     "load_noise_bank_run_record",
     "load_training_metrics",
     "load_training_run_record",
     "make_epoch_record",
     "write_egm_class_model_metadata",
-    "write_hybrid_eval_metrics",
     "write_noise_bank_run_record",
     "write_training_metrics",
     "write_training_run_record",
