@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from myocard_egm_contracts.schema_info import current_version
 from myocard_egm_contracts.validators import (
     validate_egm_class_model_metadata,
     validate_noise_bank_run_record,
@@ -120,7 +121,7 @@ def test_training_run_record_round_trips(tmp_path: Path) -> None:
 
     loaded = load_training_run_record(path)
     assert isinstance(loaded, TrainingRunRecord)
-    assert loaded.schema_version.value == "1.0"
+    assert loaded.schema_version.value == current_version("training_run_record")
     assert loaded.best.epoch == 2
     assert len(loaded.epochs) == 2
 
@@ -322,7 +323,7 @@ def test_noise_bank_run_record_round_trip_with_provenance(tmp_path: Path) -> Non
 
     loaded = load_noise_bank_run_record(path)
     assert isinstance(loaded, NoiseBankRunRecord)
-    assert loaded.schema_version.value == "1.0"
+    assert loaded.schema_version.value == current_version("noise_bank_run_record")
     assert loaded.windowing.window_samples == 512
     assert loaded.calibration.method == "r_wave_anchoring"
     assert loaded.selection.threshold_mode.value == "percentile"

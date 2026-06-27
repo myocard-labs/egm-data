@@ -159,13 +159,13 @@ def test_iafdb_label_fn_returning_none(iafdb_bank_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_classifier_bank_concat_remaps_bank_ids(
+def test_classifier_bank_concat_preserves_stable_bank_ids(
     synthetic_bank_path: Path,
     iafdb_bank_path: Path,
 ) -> None:
-    """Merging two ClassifierBanks (synthetic + IAFDB) reassigns
-    bank_ids so they don't collide, and every trace's bank_id ends up
-    pointing at the right source entry in the merged banks list."""
+    """Merging two ClassifierBanks keeps each source bank's stable bank_id
+    (no integer remap); every trace's bank_id still points at its source
+    entry by that stable id."""
     syn = load_synthetic_bank_as_classifier(
         synthetic_bank_path,
         label_fn=lambda b: (
@@ -184,9 +184,13 @@ def test_classifier_bank_concat_remaps_bank_ids(
     assert merged.n_traces == syn.n_traces + iaf.n_traces
     assert len(merged.banks) == 2
     bank_types = {b.bank_id: b.bank_type for b in merged.banks}
-    assert bank_types == {0: "synthetic", 1: "iafdb"}
-    # Every trace's bank_id is a valid index into the new banks list.
-    assert all(0 <= t.bank_id < 2 for t in merged.traces)
+    assert bank_types == {
+        "tbank_synthetic_test_2026-06-27": "synthetic",
+        "tbank_iafdb_test_2026-06-27": "iafdb",
+    }
+    # Every trace's bank_id is one of the source banks' stable ids.
+    valid_ids = set(bank_types)
+    assert all(t.bank_id in valid_ids for t in merged.traces)
 
 
 def test_classifier_bank_concat_rejects_label_mismatch(
@@ -229,7 +233,7 @@ def test_classifier_bank_hdf5_round_trip(tmp_path: Path) -> None:
         schema_version=CLASSIFIER_BANK_VERSION,
         banks=[
             ClassifierBankMetaData(
-                bank_id=0,
+                bank_id="tbank_synthetic_test_2026-06-27",
                 bank_type="synthetic",
                 bank_path="data/syn.h5",
                 bank_metadata={"simulator": "finitewave", "patch_size_mm": 40.0},
@@ -238,7 +242,7 @@ def test_classifier_bank_hdf5_round_trip(tmp_path: Path) -> None:
         traces=[
             # Trace 0 — labeled, no prediction yet.
             ClassifierTrace(
-                bank_id=0,
+                bank_id="tbank_synthetic_test_2026-06-27",
                 signal=np.arange(8, dtype=np.float32),
                 freq_hz=1000.0,
                 amp_type="mv",
@@ -249,7 +253,7 @@ def test_classifier_bank_hdf5_round_trip(tmp_path: Path) -> None:
             ),
             # Trace 1 — labeled + predicted.
             ClassifierTrace(
-                bank_id=0,
+                bank_id="tbank_synthetic_test_2026-06-27",
                 signal=np.arange(8, dtype=np.float32) + 10,
                 freq_hz=1000.0,
                 amp_type="mv",
@@ -264,7 +268,7 @@ def test_classifier_bank_hdf5_round_trip(tmp_path: Path) -> None:
             ),
             # Trace 2 — unlabeled (inference-time data style).
             ClassifierTrace(
-                bank_id=0,
+                bank_id="tbank_synthetic_test_2026-06-27",
                 signal=np.arange(8, dtype=np.float32) + 20,
                 freq_hz=1000.0,
                 amp_type="mv",

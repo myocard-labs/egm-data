@@ -18,6 +18,7 @@ import pytest
 from myocard_egm_contracts import iafdb_bank as iafdb_bank_models
 from myocard_egm_contracts import noise_bank as noise_bank_models
 from myocard_egm_contracts import synthetic_bank as synthetic_bank_models
+from myocard_egm_contracts.schema_info import current_version
 
 from myocard_egm_data.banks import write_iafdb_bank, write_noise_bank, write_synthetic_bank
 
@@ -61,8 +62,9 @@ def synthetic_bank_path(
 
     pyd_bank = synthetic_bank_models.SyntheticBank.model_validate(
         {
-            "schema_version": "1.0",
+            "schema_version": current_version("synthetic_bank"),
             "created_utc": _now_iso(),
+            "bank_id": "tbank_synthetic_test_2026-06-27",
             "description": "Synthetic bank test fixture",
             "fs_hz": fs_hz,
             "trace_duration_ms": trace_duration_ms,
@@ -113,8 +115,9 @@ def iafdb_bank_path(tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_sa
 
     pyd_bank = iafdb_bank_models.IafdbBank.model_validate(
         {
-            "schema_version": "1.1",
+            "schema_version": current_version("iafdb_bank"),
             "created_utc": _now_iso(),
+            "bank_id": "tbank_iafdb_test_2026-06-27",
             "source": "iafdb v1.0.0",
             "fs_hz": fs_hz,
             "trace_duration_ms": trace_duration_ms,
@@ -159,7 +162,7 @@ def noise_bank_path(tmp_path: Path, fs_hz: float, n_samples: int) -> Path:
 
     pyd_bank = noise_bank_models.NoiseBank.model_validate(
         {
-            "schema_version": "1.0",
+            "schema_version": current_version("noise_bank"),
             "created_utc": _now_iso(),
             "source": "iafdb v1.0.0",
             "fs_hz": fs_hz,

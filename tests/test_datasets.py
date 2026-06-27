@@ -77,7 +77,7 @@ def _build_bigger_classifier_bank(n_samples: int, fs_hz: float) -> ClassifierBan
         for pair_index in range(4):
             traces.append(
                 ClassifierTrace(
-                    bank_id=0,
+                    bank_id="tbank_synthetic_test_2026-06-27",
                     signal=rng.standard_normal(n_samples).astype(np.float32),
                     freq_hz=fs_hz,
                     amp_type="mv",
@@ -93,7 +93,7 @@ def _build_bigger_classifier_bank(n_samples: int, fs_hz: float) -> ClassifierBan
     return ClassifierBank(
         banks=[
             ClassifierBankMetaData(
-                bank_id=0,
+                bank_id="tbank_synthetic_test_2026-06-27",
                 bank_type="synthetic",
                 bank_path="test://memory",
                 bank_metadata={"simulator": "finitewave"},
@@ -157,7 +157,7 @@ def _build_mixed_label_bank(n_samples: int, fs_hz: float) -> ClassifierBank:
             label = pair_index % 2  # within-patient label alternates
             traces.append(
                 ClassifierTrace(
-                    bank_id=0,
+                    bank_id="tbank_synthetic_test_2026-06-27",
                     signal=rng.standard_normal(n_samples).astype(np.float32),
                     freq_hz=fs_hz,
                     amp_type="mv",
@@ -173,7 +173,7 @@ def _build_mixed_label_bank(n_samples: int, fs_hz: float) -> ClassifierBank:
     return ClassifierBank(
         banks=[
             ClassifierBankMetaData(
-                bank_id=0,
+                bank_id="tbank_synthetic_test_2026-06-27",
                 bank_type="synthetic",
                 bank_path="test://memory",
                 bank_metadata={"simulator": "finitewave"},
@@ -251,7 +251,7 @@ def test_build_dataloaders_warns_on_single_class_val(fs_hz: float, n_samples: in
         for _pair_index in range(3):
             traces.append(
                 ClassifierTrace(
-                    bank_id=0,
+                    bank_id="tbank_synthetic_test_2026-06-27",
                     signal=rng.standard_normal(n_samples).astype(np.float32),
                     freq_hz=fs_hz,
                     amp_type="mv",
@@ -264,7 +264,7 @@ def test_build_dataloaders_warns_on_single_class_val(fs_hz: float, n_samples: in
     bank = ClassifierBank(
         banks=[
             ClassifierBankMetaData(
-                bank_id=0,
+                bank_id="tbank_synthetic_test_2026-06-27",
                 bank_type="synthetic",
                 bank_path="test://memory",
                 bank_metadata={},
