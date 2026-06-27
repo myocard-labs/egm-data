@@ -23,27 +23,39 @@ not needed.
 
 ## Schema versioning
 
-`CLASSIFIER_BANK_VERSION = "0.1"` (see `banks/classifier_bank.py`). The
+`CLASSIFIER_BANK_VERSION = "0.2"` (see `banks/classifier_bank.py`). The
 convention follows the contracts: plain X.Y string, X bumps at the
 first release, Y bumps on every dev-time structural change. Consumers
 MUST refuse unknown major versions.
+
+`0.2` (from `0.1`) added cross-artifact linkage: the bank carries an
+optional top-level stable `id`, and the per-source / per-trace `bank_id`
+became the source bank's stable `ArtifactId` (it was an integer index
+into the `banks` list). This is a clean break from `0.1` — the reader
+does not load `0.1` files (integer `bank_id`); pre-1.0 banks are
+regenerated rather than migrated. The stable ids are validated against
+the egm-contracts `common.ArtifactId` pattern at construction.
 
 ## In-memory shape
 
 ```
 ClassifierBank
 ├── schema_version: str          # CLASSIFIER_BANK_VERSION
+├── id: str | None               # this bank's OWN stable ArtifactId
+│                                 #   (e.g. a predictions bank "upred_..._<date>");
+│                                 #   None for intermediate / untracked banks
 ├── created_utc: str             # ISO 8601 UTC
 ├── labels: dict[int, str]       # label int -> human-readable string
 ├── banks: list[ClassifierBankMetaData]   # one entry per source bank
 │   └── ClassifierBankMetaData
-│       ├── bank_id: int         # index into the banks list
+│       ├── bank_id: str         # the SOURCE bank's stable ArtifactId
+│       │                        #   (e.g. "tbank_synthetic_..._<date>")
 │       ├── bank_type: str       # "synthetic" | "iafdb" | ...
 │       ├── bank_path: str       # source file path (provenance)
 │       └── bank_metadata: dict  # generic provenance dict
 └── traces: list[ClassifierTrace]
     └── ClassifierTrace
-        ├── bank_id: int                  # references banks[bank_id]
+        ├── bank_id: str                  # references its source bank by stable id
         ├── signal: np.ndarray            # [T] float32
         ├── freq_hz: float                # sampling rate
         ├── amp_type: str                 # "mv" | "z_score" | ...
@@ -78,18 +90,19 @@ distinct from "missing".
 ```
 /                                ← root
 ├── attrs:
-│   ├── schema_version: "0.1"
+│   ├── schema_version: "0.2"
+│   ├── id: stable ArtifactId (optional; attr absent when None)
 │   ├── created_utc: ISO timestamp
 │   └── labels_json: '{"0": "healthy", "1": "fibrotic"}'
 ├── banks/                       ← group, one row per source bank
 │   └── datasets:
-│       ├── bank_id            int64[B]
+│       ├── bank_id            vlen-utf8[B]  (stable ArtifactId)
 │       ├── bank_type          vlen-utf8[B]
 │       ├── bank_path          vlen-utf8[B]
 │       └── bank_metadata_json vlen-utf8[B]
 └── traces/                      ← group, one row per trace
     └── datasets:
-        ├── bank_id              int64[N]
+        ├── bank_id              vlen-utf8[N]  (stable ArtifactId ref)
         ├── signal               float32[N, T]
         ├── freq_hz              float64[N]
         ├── amp_type             vlen-utf8[N]

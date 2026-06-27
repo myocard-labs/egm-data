@@ -12,7 +12,7 @@ Items scheduled into cross-cutting Phase work in the meta repo's
 annotation; the rest are component-internal — driven by what consumers
 actually need.
 
-## v0.3.3 — current release (shipped)
+## v0.3.x (shipped)
 
 Scope (recap; see `project/classifier_bank_format.md` and the README
 for the per-subpackage contract):
@@ -93,7 +93,31 @@ relocate it to egm-classifier (where its single consumer lives).
 
 > → Tracked at `intracardiac-platform/project/refactor_checklist.md` Phase 8 (cleanup + verification — explicit code-placement audit task lists TraceTransform as a known candidate). Also tracked as task #287. The audit happens at Phase 8 rather than during egm-features scaffolding (Phase 4) so it can be comprehensive across all repos instead of piecemeal.
 
-## v0.4.0+ — cascading from egm-contracts schema bumps
+## v0.4.0 — current release (shipped)
+
+Cascades the egm-contracts v0.5.0 / v0.5.1 cross-artifact linkage into
+egm-data. See
+`intracardiac-platform/project/cross_artifact_linkage_design.md`.
+
+- **Re-pinned** myocard-egm-contracts to `v0.5.1`.
+- **Producer-bank ids surfaced + enforced.** Bank readers surface the new
+  optional `bank_id` (None on legacy banks); `write_synthetic_bank` /
+  `write_iafdb_bank` require it on new writes. Record `build_*` helpers
+  accept the new id / pointer fields (`run_id` / `trained_on_bank_id` /
+  `produced_model_id` on the run record, `model_id` on the model sidecar,
+  `bank_id` on the noise-bank sidecar).
+- **ClassifierBank → 0.2.** Added the bank's own optional stable `id`
+  (validated via `common.ArtifactId`), and reworked the per-source /
+  per-trace `bank_id` from an integer index into the source bank's stable
+  ArtifactId — collapsing the dual id concepts and simplifying `concat`
+  (dedup by stable id, no remap). Clean break: 0.1 banks are not read.
+- **New `phases/` subpackage** — typed `load_*` / `write_*` for the three
+  cross-artifact-linkage JSON formats (`phase_manifest`, `observation`,
+  `figure_spec`).
+- **Promoted** the shared Pydantic <-> JSON helpers to a package-level
+  `_serialization` module, shared by `records/` and `phases/`.
+
+## v0.5.0+ — cascading from egm-contracts schema bumps
 
 When egm-contracts ships a schema change, egm-data needs the
 corresponding reader/writer update before any producer or consumer can
@@ -103,7 +127,7 @@ cascade order (egm-contracts → egm-data → producers → consumers).
 The known upcoming egm-contracts bumps and the egm-data work each
 requires:
 
-### Polymorphic `stimulation` (egm-contracts v0.5.0) — Phase 2
+### Polymorphic `stimulation` (egm-contracts v0.6.0) — Phase 2
 
 `synthetic_bank` writer needs to encode the polymorphic `stimulation`
 object (type discriminator + per-type params); reader needs to decode.
@@ -113,7 +137,7 @@ round-trips through the reader.
 
 > → Tracked at `intracardiac-platform/project/project_plan.md` Phase 2.
 
-### `iafdb_bank` 1.2 + audit-report sidecar (egm-contracts) — Phase 1.5
+### `iafdb_bank` 1.3 + audit-report sidecar (egm-contracts) — Phase 1.5
 
 When egm-contracts adds the `run_record_path` field to `iafdb_bank`
 attrs (and possibly a new `iafdb_bank_run_record` schema for the
@@ -126,7 +150,7 @@ sidecar itself), egm-data ships:
 
 > → Tracked at `intracardiac-platform/project/project_plan.md` Phase 1.5.
 
-### `noise_bank` 1.1 + `noise_bank_run_record` 1.1 (egm-contracts) — Phase 1.5
+### `noise_bank` 1.1 + `noise_bank_run_record` 1.2 (egm-contracts) — Phase 1.5
 
 When egm-contracts adds the `calibration_scalar` per-trace column and
 the `per_trace_provenance.lead` field, egm-data updates the noise-bank

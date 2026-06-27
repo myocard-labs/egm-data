@@ -12,8 +12,9 @@ The on-disk formats (HDF5 banks, JSON run records, CSV metrics, etc.) are owned 
 
 What this package contains:
 
-- **Bank readers and writers** for the HDF5 schemas — `synthetic_bank` (clean or noise-mixed EGMs), `iafdb_bank` (calibrated + band-passed segments), and `noise_bank` (low-amplitude windows used as additive noise by the synthetic mixer). Source-specific Pydantic models from `egm-contracts` get converted into the unified in-memory `ClassifierBank`.
+- **Bank readers and writers** for the HDF5 schemas — `synthetic_bank` (clean or noise-mixed EGMs), `iafdb_bank` (calibrated + band-passed segments), and `noise_bank` (low-amplitude windows used as additive noise by the synthetic mixer). Source-specific Pydantic models from `egm-contracts` get converted into the unified in-memory `ClassifierBank`. All banks carry stable cross-artifact ids (egm-contracts v0.5.0): readers surface them, and producer-bank writers require them on new files.
 - **Record readers and writers** for the JSON / CSV training and evaluation artifacts — `training_run_record` (run.json), `training_metrics` (metrics.csv), `egm_class_model_metadata` (inference-side model metadata for the 1-D EGM-classifier family), and `noise_bank_run_record` (extraction provenance sidecar for a noise bank). Every `build_*` returns a typed Pydantic model; every `write_*` accepts one; every `load_*` returns one.
+- **Phase-artifact readers and writers** (`myocard_egm_data.phases`) for the cross-artifact-linkage JSON formats added in egm-contracts v0.5.0 — the per-phase `manifest.json`, observations, and figure specs that organize a project phase's artifacts. Typed `load_*` / `write_*` over each schema.
 - **PyTorch `Dataset` wrappers** including the `TraceTransform` per-trace normalize+pad+augment pipeline, the patient-aware split, and a `build_dataloaders` convenience that ties banks + splits + datasets together.
 
 Schema versioning lives in `myocard-egm-contracts`; this package is the thin I/O layer over those schemas.
