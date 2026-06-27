@@ -12,6 +12,9 @@ This package owns:
   ``model_metadata.json``.
 - **PyTorch ``Dataset`` wrappers** (``datasets``), including the per-trace
   normalize + pad + augment transform and the patient-aware split.
+- **Phase-artifact readers/writers** (``phases``) for the cross-artifact-
+  linkage JSON formats: the per-phase ``manifest.json``, observations, and
+  figure specs (egm-contracts v0.5.0).
 
 Schema versioning lives in ``myocard-egm-contracts``. This package is
 deliberately a thin I/O layer over those schemas — the formats are the

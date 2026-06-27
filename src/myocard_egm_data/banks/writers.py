@@ -76,6 +76,13 @@ def write_synthetic_bank(
     (synthetic-egm-pipeline) constructs the model and calls this; the
     writer's only job is to serialize.
     """
+    if bank.bank_id is None:
+        raise ValueError(
+            "write_synthetic_bank requires bank.bank_id (the stable "
+            "cross-artifact id) on new banks — the producer stamps it at "
+            "write time (egm-contracts v0.5.0). Legacy banks without it can "
+            "still be read, just not re-written."
+        )
     path = Path(path)
     if path.exists() and not overwrite:
         raise FileExistsError(f"{path} exists; pass overwrite=True.")
@@ -105,6 +112,7 @@ def write_synthetic_bank(
 def _write_synthetic_root_attrs(f: h5py.File, bank: _synthetic_bank_models.SyntheticBank) -> None:
     f.attrs["schema_version"] = current_version("synthetic_bank")
     f.attrs["created_utc"] = _datetime_str(bank.created_utc)
+    f.attrs["bank_id"] = bank.bank_id
     f.attrs["description"] = bank.description
     f.attrs["fs_hz"] = _enum_or_float(bank.fs_hz)
     f.attrs["trace_duration_ms"] = float(bank.trace_duration_ms)
@@ -212,6 +220,13 @@ def write_iafdb_bank(
     labeling is consumer-side policy applied at ClassifierBank
     conversion time.
     """
+    if bank.bank_id is None:
+        raise ValueError(
+            "write_iafdb_bank requires bank.bank_id (the stable "
+            "cross-artifact id) on new banks — the producer stamps it at "
+            "write time (egm-contracts v0.5.0). Legacy banks without it can "
+            "still be read, just not re-written."
+        )
     path = Path(path)
     if path.exists() and not overwrite:
         raise FileExistsError(f"{path} exists; pass overwrite=True.")
@@ -241,6 +256,7 @@ def write_iafdb_bank(
     with h5py.File(path, "w") as f:
         f.attrs["schema_version"] = current_version("iafdb_bank")
         f.attrs["created_utc"] = created_utc
+        f.attrs["bank_id"] = bank.bank_id
         f.attrs["source"] = _enum_or_str(bank.source)
         f.attrs["fs_hz"] = _enum_or_float(bank.fs_hz)
         f.attrs["trace_duration_ms"] = float(bank.trace_duration_ms)

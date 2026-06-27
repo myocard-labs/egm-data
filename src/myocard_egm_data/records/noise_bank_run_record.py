@@ -34,7 +34,7 @@ from myocard_egm_contracts._generated.python.noise_bank_run_record import (
 )
 from myocard_egm_contracts.schema_info import current_version
 
-from ._helpers import _load_pydantic_json, _utc_now, _write_pydantic_json
+from .._serialization import _load_pydantic_json, _utc_now, _write_pydantic_json
 
 __all__ = [
     "Calibration",
@@ -62,6 +62,7 @@ def build_noise_bank_run_record(
     threshold_mode: str,
     threshold_value: float,
     source_records: Sequence[str],
+    bank_id: str | None = None,
     description: str = "",
     per_trace_provenance: Mapping[str, Sequence[Any]] | None = None,
 ) -> NoiseBankRunRecord:
@@ -94,6 +95,11 @@ def build_noise_bank_run_record(
     source_records
         Record identifiers from the upstream dataset that contributed
         at least one segment.
+    bank_id
+        Optional stable cross-artifact id of the noise bank this sidecar
+        describes (egm-contracts v0.5.0; e.g. ``nbank_iafdb_2026-06-15``).
+        Optional; the producer (iafdb-pipeline) stamps it. Pattern
+        validated by the Pydantic model.
     description
         Free-form human-readable note about the run. Default empty.
     per_trace_provenance
@@ -125,6 +131,7 @@ def build_noise_bank_run_record(
                 current_version("noise_bank_run_record"),
             ),
             "created_utc": _utc_now(),
+            "bank_id": bank_id,
             "source": source,
             "description": description,
             "fs_hz": float(fs_hz),

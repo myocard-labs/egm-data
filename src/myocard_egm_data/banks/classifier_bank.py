@@ -37,8 +37,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
+from myocard_egm_contracts import common as _contracts_common
+from pydantic import ValidationError
 
-CLASSIFIER_BANK_VERSION = "0.1"
+CLASSIFIER_BANK_VERSION = "0.2"
 """On-disk and in-memory schema version for ClassifierBank.
 
 Bump on any breaking change to the dataclass shape or the HDF5 layout.
@@ -47,7 +49,19 @@ structural change. Lives here rather than in egm-contracts because
 ClassifierBank is an egm-data concept (a JSON Schema would force the
 on-disk format into a JSON-shaped Pydantic model, which is awful for
 numpy arrays — see the project-doc discussion).
+
+0.2 (from 0.1) reworked the cross-artifact linkage: every bank now
+carries an optional top-level stable artifact ``id``, and the
+per-source / per-trace ``bank_id`` became the source bank's stable
+ArtifactId (it was an integer index into ``banks``). This is a clean
+break from 0.1 — 0.1 files (integer ``bank_id``) are not read.
 """
+
+SUPPORTED_CLASSIFIER_BANK_VERSIONS: tuple[str, ...] = ("0.2",)
+"""On-disk versions the reader accepts. Writers always stamp
+:data:`CLASSIFIER_BANK_VERSION`. 0.1 (integer ``bank_id``) is
+intentionally unsupported — the project is pre-1.0, so previously
+generated 0.1 banks are regenerated rather than migrated."""
 
 
 def _utc_now() -> str:
@@ -108,7 +122,10 @@ class ClassifierTrace:
     Attributes
     ----------
     bank_id
-        References one entry in :attr:`ClassifierBank.banks` by index.
+        Stable id of the source bank this trace came from — references
+        one entry in :attr:`ClassifierBank.banks` by its ``bank_id``
+        (an egm-contracts ArtifactId, e.g.
+        ``tbank_synthetic_courtemanche_v1_5_2026-06-25``).
     signal
         ``[T]`` float32 array — the EGM waveform. Length may exceed the
         classifier's input length, in which case the dataset wrapper
@@ -139,7 +156,7 @@ class ClassifierTrace:
         verbatim from the source bank.
     """
 
-    bank_id: int
+    bank_id: str
     signal: np.ndarray
     freq_hz: float
     amp_type: str
@@ -160,15 +177,17 @@ class ClassifierBankMetaData:
 
     A ClassifierBank can carry traces from multiple source banks
     (for example a synthetic bank combined with an IAFDB bank). Each
-    ClassifierTrace references its source via ``bank_id`` which is the
-    index into :attr:`ClassifierBank.banks`.
+    ClassifierTrace references its source via ``bank_id``, the source
+    bank's stable cross-artifact id.
 
     Attributes
     ----------
     bank_id
-        Index of this entry in ``ClassifierBank.banks``. Used by
-        traces to refer back. ``concat`` reassigns bank_ids when banks
-        are merged.
+        Stable cross-artifact id of this source bank (an egm-contracts
+        ArtifactId, e.g. ``tbank_synthetic_courtemanche_v1_5_2026-06-25``).
+        Traces reference their source by this id. Unique across the
+        ClassifierBank's ``banks`` list; ``concat`` dedups by it. Replaces
+        the integer index used before ClassifierBank 0.2.
     bank_type
         Identifier for the source format that produced this entry —
         e.g. ``"synthetic"``, ``"iafdb"``. New source types add new
@@ -182,10 +201,23 @@ class ClassifierBankMetaData:
         edges, etc.
     """
 
-    bank_id: int
+    bank_id: str
     bank_type: str
     bank_path: str
     bank_metadata: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        # Validate the source bank's stable id against the shared
+        # egm-contracts pattern (common.ArtifactId), the same way
+        # ClassifierBank.id is validated. Frozen dataclass: read + raise only.
+        try:
+            _contracts_common.ArtifactId(self.bank_id)
+        except ValidationError as exc:
+            raise ValueError(
+                f"ClassifierBankMetaData.bank_id {self.bank_id!r} is not a "
+                "valid stable artifact id (egm-contracts ArtifactId pattern, "
+                "e.g. 'tbank_synthetic_courtemanche_v1_5_2026-06-25')."
+            ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +236,14 @@ class ClassifierBank:
         (:data:`CLASSIFIER_BANK_VERSION` at creation time).
     created_utc
         ISO-8601 UTC timestamp captured at construction.
+    id
+        Stable cross-artifact identifier for this bank when it is a
+        saved, tracked artifact — e.g. a predictions bank
+        (``upred_..._<date>`` / ``lpred_..._<date>``). ``None`` for
+        intermediate in-memory banks that aren't tracked artifacts (a
+        concat result, a freshly converted source bank, etc.). Note this
+        is the *bank's own* stable id and is distinct from the integer
+        per-source ``bank_id`` carried on traces + source-bank entries.
     banks
         List of source-bank provenance entries. Indexed by
         :attr:`ClassifierTrace.bank_id`.
@@ -219,9 +259,25 @@ class ClassifierBank:
 
     schema_version: str = field(default_factory=lambda: CLASSIFIER_BANK_VERSION)
     created_utc: str = field(default_factory=_utc_now)
+    id: str | None = None
     banks: list[ClassifierBankMetaData] = field(default_factory=list)
     traces: list[ClassifierTrace] = field(default_factory=list)
     labels: dict[int, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Validate the optional stable artifact id against the shared
+        # egm-contracts pattern (common.ArtifactId). The field stays a plain
+        # str for dataclass + HDF5 ergonomics, but a malformed id is rejected
+        # at construction time so an invalid id can never exist on a bank.
+        if self.id is not None:
+            try:
+                _contracts_common.ArtifactId(self.id)
+            except ValidationError as exc:
+                raise ValueError(
+                    f"ClassifierBank.id {self.id!r} is not a valid stable "
+                    "artifact id (expected the egm-contracts ArtifactId "
+                    "pattern, e.g. 'upred_iafdb_v1_5_2026-06-25')."
+                ) from exc
 
     # ---- derived helpers ------------------------------------------------
 
@@ -323,9 +379,11 @@ class ClassifierBank:
         banks (per the locked-in design rule: integer labels mean the
         same thing in every contributing bank, or concat is a bug).
 
-        Bank IDs are reassigned during concat so they don't collide:
-        each source bank's traces get their ``bank_id`` rewritten to
-        match the source bank's position in the combined ``banks`` list.
+        Source-bank entries are deduplicated by their stable ``bank_id``
+        (first occurrence wins); traces keep their ``bank_id`` references
+        unchanged, since stable artifact ids are globally unique and don't
+        collide. The merged bank's own ``id`` is left unset — it's a new
+        artifact whose id the caller assigns when saving it.
 
         Schema versions across all banks must match — concat is an
         in-memory operation, not a format conversion.
@@ -353,28 +411,31 @@ class ClassifierBank:
                     f"({head_ver!r})."
                 )
 
-        # Build the merged banks list with reassigned bank_ids.
+        # Merge source-bank entries, deduplicating by stable bank_id
+        # (first occurrence wins). No id remap: stable ids are unique.
         new_banks: list[ClassifierBankMetaData] = []
-        new_traces: list[ClassifierTrace] = []
-        # Map from (source_index_in_banks_list, old_bank_id) -> new_bank_id
-        bank_id_remap: dict[tuple[int, int], int] = {}
-        for src_idx, b in enumerate(banks):
-            for old_meta in b.banks:
-                new_id = len(new_banks)
+        seen_bank_ids: set[str] = set()
+        for b in banks:
+            for meta in b.banks:
+                if meta.bank_id in seen_bank_ids:
+                    continue
+                seen_bank_ids.add(meta.bank_id)
                 new_banks.append(
                     ClassifierBankMetaData(
-                        bank_id=new_id,
-                        bank_type=old_meta.bank_type,
-                        bank_path=old_meta.bank_path,
-                        bank_metadata=dict(old_meta.bank_metadata),
+                        bank_id=meta.bank_id,
+                        bank_type=meta.bank_type,
+                        bank_path=meta.bank_path,
+                        bank_metadata=dict(meta.bank_metadata),
                     )
                 )
-                bank_id_remap[(src_idx, old_meta.bank_id)] = new_id
-        for src_idx, b in enumerate(banks):
+        # Concatenate traces verbatim — their stable bank_id references
+        # already point at the (deduped) source-bank entries.
+        new_traces: list[ClassifierTrace] = []
+        for b in banks:
             for tr in b.traces:
                 new_traces.append(
                     ClassifierTrace(
-                        bank_id=bank_id_remap[(src_idx, tr.bank_id)],
+                        bank_id=tr.bank_id,
                         signal=tr.signal,
                         freq_hz=tr.freq_hz,
                         amp_type=tr.amp_type,

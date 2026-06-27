@@ -68,6 +68,7 @@ def read_synthetic_bank_hdf5(
         doc: dict[str, Any] = {
             "schema_version": _str_attr(f, "schema_version", required=True, path=path),
             "created_utc": _str_attr(f, "created_utc", required=True, path=path),
+            "bank_id": _opt_str_attr(f, "bank_id"),
             "description": _str_attr(f, "description", required=False, path=path, default=""),
             "fs_hz": _float_attr(f, "fs_hz", required=True, path=path),
             "trace_duration_ms": _float_attr(f, "trace_duration_ms", required=True, path=path),
@@ -136,6 +137,7 @@ def read_iafdb_bank_hdf5(path: Path | str) -> _iafdb_bank_models.IafdbBank:
         doc: dict[str, Any] = {
             "schema_version": _str_attr(f, "schema_version", required=True, path=path),
             "created_utc": _str_attr(f, "created_utc", required=True, path=path),
+            "bank_id": _opt_str_attr(f, "bank_id"),
             "source": _str_attr(f, "source", required=True, path=path),
             "fs_hz": _float_attr(f, "fs_hz", required=True, path=path),
             "trace_duration_ms": _float_attr(f, "trace_duration_ms", required=True, path=path),
@@ -204,6 +206,19 @@ def _str_attr(
         if required:
             raise ValueError(f"Bank {path} is missing required root attr {name!r}.")
         return default
+    raw = f.attrs[name]
+    return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+
+
+def _opt_str_attr(f: h5py.File, name: str) -> str | None:
+    """Read an optional string root attr, returning ``None`` when absent.
+
+    Distinct from ``_str_attr(..., required=False)`` which returns ``""``:
+    an absent optional id must be ``None`` (so the Pydantic model leaves it
+    unset), never ``""`` (which would fail the stable-id pattern).
+    """
+    if name not in f.attrs:
+        return None
     raw = f.attrs[name]
     return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
 
