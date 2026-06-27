@@ -34,8 +34,9 @@ load for that schema only, mirroring the per-schema layout in
   ``write_noise_bank_run_record``, ``load_noise_bank_run_record``;
   re-exports :class:`NoiseBankRunRecord` and its nested models.
 
-Shared low-level plumbing lives in :mod:`._helpers` (NaN
-sanitization, strict-JSON writer, typed reader). It is strictly
+Shared low-level plumbing lives in the package-level
+:mod:`myocard_egm_data._serialization` (NaN sanitization, strict-JSON
+writer, typed reader), shared with the ``phases/`` subpackage. It is
 internal — not re-exported here.
 
 Typing

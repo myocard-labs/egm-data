@@ -257,6 +257,41 @@ Each sub-block accepts either a typed Pydantic instance (e.g. a
 `ModelArtifact` pulled from a registry) or a plain dict — Pydantic
 validates dicts into the nested sub-models at construction time.
 
+### Read or write phase artifacts (manifest / observation / figure spec)
+
+The `phases` subpackage is the typed I/O for the cross-artifact-linkage
+JSON formats (egm-contracts v0.5.0) that organize a project phase's
+artifacts. egm-studio is their canonical curator; this is the layer it
+(and `intracardiac-platform/scripts/validate_manifest.py`) read and write
+them through.
+
+```python
+from myocard_egm_data.phases import (
+    load_phase_manifest, write_phase_manifest,
+    Observation, write_observation,
+)
+
+# Load, inspect, and re-write a per-phase manifest.
+manifest = load_phase_manifest("phases/phase_1_5/manifest.json")
+print(len(manifest.egm_banks), len(manifest.noise_banks))
+write_phase_manifest("phases/phase_1_5/manifest.json", manifest)
+
+# Construct + write an observation (a free-text `description` is required).
+obs = Observation.model_validate({
+    "schema_version": "1",
+    "id": "obs_courtemanche_high_entropy_tail_2026-06-27",
+    "date": "2026-06-27",
+    "title": "high-entropy tail",
+    "description": "Synthetic sample_entropy has a long tail IAFDB never reaches.",
+})
+write_observation("phases/phase_1_5/observations/obs_courtemanche_high_entropy_tail_2026-06-27.json", obs)
+```
+
+Every `load_*` returns a typed Pydantic model — an invalid id pattern, a
+missing `description`, or an unknown key raises `pydantic.ValidationError`;
+every `write_*` emits strict, deterministic JSON with optional-defaulted
+fields omitted.
+
 ### Combine multiple banks into a hybrid bank
 
 Use `ClassifierBank.concat` to build a hybrid (synthetic + real) bank
@@ -407,6 +442,7 @@ from `label_truth=0`.
 |---|---|
 | `myocard_egm_data.banks` | `ClassifierBank` + per-trace types, converters from Pydantic `SyntheticBank` / `IafdbBank`, `read_*_hdf5` Pydantic readers (synthetic / iafdb / noise), `write_*` Pydantic writers (synthetic / iafdb / noise), ClassifierBank HDF5 I/O |
 | `myocard_egm_data.records` | One per-file module per schema, mirroring the per-schema layout in `myocard-egm-contracts._generated.python`: `training_run_record` (run.json), `training_metrics` (metrics.csv), `egm_class_model_metadata` (1-D EGM-classifier inference sidecar), `noise_bank_run_record` (noise-bank provenance sidecar). Each module owns `build_*` (where applicable) + `write_*` + `load_*` and re-exports its Pydantic models |
+| `myocard_egm_data.phases` | Typed I/O for the cross-artifact-linkage JSON formats (egm-contracts v0.5.0): `phase_manifest` (per-phase `manifest.json`), `observation`, `figure_spec`. Each module owns `load_*` / `write_*` and re-exports its Pydantic models |
 | `myocard_egm_data.splits` | `patient_aware_split` (numpy-array level) and `split_classifier_bank` / `apply_split_indices` (ClassifierBank-level) plus the `strategies/` subpackage (`AnyPositiveStrategy`, `BinnedDensityStrategy`, `PatientStratificationStrategy` Protocol) for pluggable per-patient stratification |
 | `myocard_egm_data.augmentation` | `TraceTransform` — per-trace normalize + pad + augment, used in the DataLoader pipeline |
 | `myocard_egm_data.datasets` | PyTorch `Dataset` wrappers and `build_dataloaders` (requires `[torch]` extra) |

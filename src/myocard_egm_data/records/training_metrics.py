@@ -28,7 +28,7 @@ from myocard_egm_contracts._generated.python.training_metrics import TrainingMet
 from myocard_egm_contracts._generated.python.training_run_record import EpochRecord
 from myocard_egm_contracts.schema_info import csv_column_order
 
-from ._helpers import _sanitize_floats
+from .._serialization import _sanitize_floats
 
 __all__ = [
     "TrainingMetricsRow",
@@ -80,7 +80,7 @@ def load_training_metrics(path: Path | str) -> list[TrainingMetricsRow]:
 
 
 # ---------------------------------------------------------------------------
-# Helpers (schema-specific; not in _helpers.py because no other schema needs them)
+# Helpers (schema-specific; not in _serialization.py because no other schema needs them)
 # ---------------------------------------------------------------------------
 
 

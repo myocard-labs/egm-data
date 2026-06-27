@@ -38,7 +38,7 @@ from myocard_egm_contracts._generated.python.egm_class_model_metadata import (
 )
 from myocard_egm_contracts.schema_info import current_version
 
-from ._helpers import _load_pydantic_json, _utc_now, _write_pydantic_json
+from .._serialization import _load_pydantic_json, _utc_now, _write_pydantic_json
 
 __all__ = [
     "Decision",
@@ -61,6 +61,7 @@ def build_egm_class_model_metadata(
     preprocessing: Preprocessing | Mapping[str, Any],
     decision: Decision | Mapping[str, Any],
     training_provenance: Mapping[str, Any],
+    model_id: str | None = None,
 ) -> EgmClassModelMetadata:
     """Assemble an :class:`EgmClassModelMetadata` with version + timestamp stamped.
 
@@ -74,12 +75,20 @@ def build_egm_class_model_metadata(
     (rather than ``input`` / ``output``) because ``input`` shadows the
     Python builtin; the underlying schema field names are still
     ``input`` and ``output``.
+
+    ``model_id`` is the optional stable cross-artifact id of this model
+    (egm-contracts v0.5.0) — what a run.json's ``produced_model_id``
+    points at. Optional in the schema; egm-classifier stamps it at export
+    time. The model->run link is intentionally NOT stored here (the run
+    record owns it); pass a value matching the ``common.ArtifactId`` shape
+    (e.g. ``model_egm_classifier_v1_5_2026-06-25``) or ``None``.
     """
     return EgmClassModelMetadata(
         schema_version=EgmClassModelMetadataSchemaVersion(
             current_version("egm_class_model_metadata"),
         ),
         created_utc=_utc_now(),
+        model_id=model_id,
         # ``model_validate`` accepts either a dict or an existing
         # instance and returns the typed sub-model — gives mypy the
         # concrete type it wants while preserving the dict-ergonomic

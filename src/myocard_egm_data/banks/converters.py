@@ -113,6 +113,17 @@ def synthetic_bank_to_classifier(
     n = len(pyd_bank.traces.signal)
     labels_arr, labels_dict = _run_label_fn(label_fn, pyd_bank, n)
 
+    # The source bank's stable id becomes the ClassifierBankMetaData /
+    # ClassifierTrace bank_id (egm-contracts v0.5.0). Required — a bank
+    # without one can't be referenced from a ClassifierBank.
+    if pyd_bank.bank_id is None:
+        raise ValueError(
+            "synthetic_bank_to_classifier requires the source bank to carry a "
+            "stable bank_id (egm-contracts v0.5.0). Re-export the bank with a "
+            "producer that stamps it."
+        )
+    source_id = pyd_bank.bank_id
+
     bank_metadata: dict[str, Any] = {
         "schema_version": _enum_or_str(pyd_bank.schema_version),
         "created_utc": _datetime_to_str(pyd_bank.created_utc),
@@ -131,7 +142,7 @@ def synthetic_bank_to_classifier(
         "noise_bank_source": pyd_bank.noise_bank_source,
     }
     source_meta = ClassifierBankMetaData(
-        bank_id=0,
+        bank_id=source_id,
         bank_type="synthetic",
         bank_path=str(bank_path),
         bank_metadata=bank_metadata,
@@ -157,7 +168,7 @@ def synthetic_bank_to_classifier(
         }
         traces.append(
             ClassifierTrace(
-                bank_id=0,
+                bank_id=source_id,
                 signal=np.asarray(t.signal[i], dtype=np.float32),
                 freq_hz=fs_hz,
                 amp_type="mv",
@@ -214,6 +225,16 @@ def iafdb_bank_to_classifier(
     n = len(pyd_bank.traces.signal)
     labels_arr, labels_dict = _run_label_fn(label_fn, pyd_bank, n)
 
+    # The source bank's stable id becomes the ClassifierBankMetaData /
+    # ClassifierTrace bank_id (egm-contracts v0.5.0). Required.
+    if pyd_bank.bank_id is None:
+        raise ValueError(
+            "iafdb_bank_to_classifier requires the source bank to carry a "
+            "stable bank_id (egm-contracts v0.5.0). Re-export the bank with a "
+            "producer that stamps it."
+        )
+    source_id = pyd_bank.bank_id
+
     bank_metadata: dict[str, Any] = {
         "schema_version": _enum_or_str(pyd_bank.schema_version),
         "created_utc": _datetime_to_str(pyd_bank.created_utc),
@@ -230,7 +251,7 @@ def iafdb_bank_to_classifier(
         "source_records": list(pyd_bank.source_records),
     }
     source_meta = ClassifierBankMetaData(
-        bank_id=0,
+        bank_id=source_id,
         bank_type="iafdb",
         bank_path=str(bank_path),
         bank_metadata=bank_metadata,
@@ -252,7 +273,7 @@ def iafdb_bank_to_classifier(
         }
         traces.append(
             ClassifierTrace(
-                bank_id=0,
+                bank_id=source_id,
                 signal=np.asarray(t.signal[i], dtype=np.float32),
                 freq_hz=fs_hz,
                 amp_type="mv",

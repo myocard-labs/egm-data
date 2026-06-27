@@ -1,16 +1,18 @@
-"""Shared low-level helpers for record I/O.
+"""Shared serialization plumbing — Pydantic <-> strict, deterministic JSON.
 
-Strictly internal to ``records/`` — not re-exported from ``__init__.py``.
-Schema-specific build/write/load logic lives in the per-schema files
-(``run_record.py``, ``metrics.py``, ``model_metadata.py``,
-``noise_bank_run_record.py``); this module owns
-only the cross-schema plumbing they all share:
+Package-level helpers used by every subpackage that reads/writes a typed
+egm-contracts model as JSON: ``records/`` (run.json, model_metadata.json,
+noise_bank_run_record.json) and ``phases/`` (manifest.json, observations,
+figure specs). Kept here, rather than under one of those subpackages, so
+neither has to reach into the other's internals.
+
+Provides:
 
 - ISO-8601 UTC timestamp helper (every ``build_*`` stamps one).
 - NaN/Inf sanitization for numpy-derived metric dicts before Pydantic
   construction (Pydantic v2's ``model_dump_json`` raises on non-finite
   floats by default).
-- Pydantic → strict, deterministic JSON writer (sort_keys, allow_nan=False).
+- Pydantic -> strict, deterministic JSON writer (sort_keys, allow_nan=False).
 - Pydantic JSON reader that returns a typed model instance.
 """
 

@@ -35,7 +35,7 @@ from myocard_egm_contracts._generated.python.training_run_record import (
 )
 from myocard_egm_contracts.schema_info import current_version
 
-from ._helpers import _load_pydantic_json, _sanitize_floats, _utc_now, _write_pydantic_json
+from .._serialization import _load_pydantic_json, _sanitize_floats, _utc_now, _write_pydantic_json
 
 __all__ = [
     "BestEpoch",
@@ -139,6 +139,9 @@ def build_training_run_record(
     select_metric: str,
     test_loss: float | None = None,
     test_metrics: Mapping[str, Any] | None = None,
+    run_id: str | None = None,
+    trained_on_bank_id: str | None = None,
+    produced_model_id: str | None = None,
 ) -> TrainingRunRecord:
     """Assemble a :class:`TrainingRunRecord` with version + timestamp stamped.
 
@@ -168,6 +171,15 @@ def build_training_run_record(
         evaluated). When supplied, the reliability bins inside
         ``test_metrics`` are split out of the scalar dict and placed
         into the dedicated ``HeldOutTest.reliability`` slot.
+    run_id, trained_on_bank_id, produced_model_id
+        Optional stable cross-artifact ids (egm-contracts v0.5.0): this
+        run's own ``run_id``, plus relationship pointers to the training
+        bank and the produced model. Optional in the schema; the producer
+        (egm-classifier) stamps them at train/export time. The pattern is
+        validated by the Pydantic model — pass values that match the
+        ``common.ArtifactId`` shape (e.g. ``run_v1_5_courtemanche_2026-06-25``)
+        or ``None``. Distinct from the free-form ``run_meta['run_id']``,
+        which producers SHOULD keep equal to the top-level ``run_id``.
     """
     test_block: HeldOutTest | None = None
     if test_metrics is not None:
@@ -180,6 +192,9 @@ def build_training_run_record(
     return TrainingRunRecord(
         schema_version=TrainingRunRecordSchemaVersion(current_version("training_run_record")),
         created_utc=_utc_now(),
+        run_id=run_id,
+        trained_on_bank_id=trained_on_bank_id,
+        produced_model_id=produced_model_id,
         run=dict(run_meta),
         config=dict(config),
         epochs=list(epoch_records),
