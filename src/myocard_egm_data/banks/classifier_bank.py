@@ -369,6 +369,28 @@ class ClassifierBank:
             out.append(str(pid))
         return np.asarray(out, dtype=object)
 
+    def uniform_fs_hz(self) -> float:
+        """Single sample rate (Hz) shared by every trace, or raise.
+
+        Mirrors :meth:`signal_array`'s "uniform-or-raise" contract for the
+        columnar consumers that need one rate for the whole batch — feature
+        extraction (``myocard_egm_features.bundle.extract_all``), dataset
+        construction, spectral analysis. Raises ``ValueError`` on an empty
+        bank, or one whose traces carry differing ``freq_hz`` (e.g. a
+        mixed-source concat at different rates) which can't feed a single
+        batched call and needs per-source handling.
+        """
+        if not self.traces:
+            raise ValueError("ClassifierBank has no traces; no sample rate to report.")
+        freqs = {float(t.freq_hz) for t in self.traces}
+        if len(freqs) != 1:
+            raise ValueError(
+                "ClassifierBank.uniform_fs_hz() requires a single shared sample "
+                f"rate across traces; got freq_hz values {sorted(freqs)}. Split "
+                "by source rate first."
+            )
+        return freqs.pop()
+
     # ---- concat ---------------------------------------------------------
 
     @classmethod

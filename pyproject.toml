@@ -19,7 +19,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "myocard-egm-data"
-version = "0.4.0"
+version = "0.4.1"
 description = "I/O and dataset ergonomics for myocard-egm-contracts formats (HDF5 banks, run records, predictions) + PyTorch datasets and patient-aware splits."
 readme = "README.md"
 license = { file = "LICENSE" }
