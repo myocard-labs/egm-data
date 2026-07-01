@@ -31,7 +31,12 @@ from myocard_egm_contracts._generated.python.phase_manifest import (
 # Generic Pydantic <-> strict-JSON plumbing, shared with the records/ modules.
 from .._serialization import _load_pydantic_json, _write_pydantic_json
 
+#: Conventional filename of a phase's manifest inside its phase folder
+#: (``intracardiac-platform/project/phases/phase_X/manifest.json``).
+MANIFEST_FILENAME = "manifest.json"
+
 __all__ = [
+    "MANIFEST_FILENAME",
     "EgmBankEntry",
     "FigureEntry",
     "ModelEntry",
@@ -41,6 +46,7 @@ __all__ = [
     "PhaseManifest",
     "TrainingRunEntry",
     "UsageTag",
+    "load_phase_dir",
     "load_phase_manifest",
     "write_phase_manifest",
 ]
@@ -53,6 +59,19 @@ def load_phase_manifest(path: Path | str) -> PhaseManifest:
     unknown key, missing required entry field, ...).
     """
     return _load_pydantic_json(path, PhaseManifest)
+
+
+def load_phase_dir(phase_dir: Path | str) -> PhaseManifest:
+    """Load a phase's manifest from its phase DIRECTORY.
+
+    A phase lives at ``intracardiac-platform/project/phases/phase_X/`` with its
+    shallow index at ``manifest.json``; pass the phase directory and this reads
+    ``<phase_dir>/manifest.json`` through :func:`load_phase_manifest`. When you
+    already hold the manifest file path, call :func:`load_phase_manifest`
+    directly. Propagates that function's errors: a ``pydantic.ValidationError``
+    on a malformed manifest, ``FileNotFoundError`` when the file is absent.
+    """
+    return load_phase_manifest(Path(phase_dir) / MANIFEST_FILENAME)
 
 
 def write_phase_manifest(path: Path | str, manifest: PhaseManifest) -> Path:

@@ -44,7 +44,7 @@ for the per-subpackage contract):
 Pinned dependency:
 
 ```
-myocard-egm-contracts @ git+...@v0.4.0
+myocard-egm-contracts @ git+...@v0.5.2
 ```
 
 `[torch]` extra pulls torch + torchmetrics for the dataset wrappers.
@@ -92,6 +92,16 @@ materializes by the Refactor Step 8 audit time, the right move is
 relocate it to egm-classifier (where its single consumer lives).
 
 > → Tracked at `intracardiac-platform/project/refactor_checklist.md` Phase 8 (cleanup + verification — explicit code-placement audit task lists TraceTransform as a known candidate). Also tracked as task #287. The audit happens at Phase 8 rather than during egm-features scaffolding (Phase 4) so it can be comprehensive across all repos instead of piecemeal.
+
+## Shipped after v0.4.0
+
+- **v0.4.1** — `ClassifierBank.uniform_fs_hz()` accessor for single-rate banks
+  (+ test).
+- **v0.4.2** — re-pin egm-contracts `v0.5.1 → v0.5.2` (the generated role
+  vocabulary) and add `phases.load_phase_dir(phase_dir)`, which reads
+  `<phase_dir>/manifest.json` through `load_phase_manifest` so a consumer points
+  at a phase folder and gets the typed `PhaseManifest` (the phase-folder layout
+  lives with the reader, not each caller). Additive.
 
 ## v0.4.0 — current release (shipped)
 
