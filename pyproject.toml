@@ -19,7 +19,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "myocard-egm-data"
-version = "0.4.1"
+version = "0.4.2"
 description = "I/O and dataset ergonomics for myocard-egm-contracts formats (HDF5 banks, run records, predictions) + PyTorch datasets and patient-aware splits."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -46,7 +46,7 @@ classifiers = [
 # myocard-egm-data without dragging torch onto a machine that doesn't want
 # it. The contracts package is the format truth.
 dependencies = [
-  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.5.1",
+  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.5.2",
   # numpy 2.5+ ships type stubs that use PEP 695 "type X = Y" alias
   # syntax, which mypy refuses to parse under ``python_version = "3.10"``
   # (the version we type-check against to keep 3.10 runtime support).

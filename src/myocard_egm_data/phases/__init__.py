@@ -44,6 +44,7 @@ from .observation import (
     write_observation,
 )
 from .phase_manifest import (
+    MANIFEST_FILENAME,
     EgmBankEntry,
     FigureEntry,
     ModelEntry,
@@ -53,11 +54,13 @@ from .phase_manifest import (
     PhaseManifest,
     TrainingRunEntry,
     UsageTag,
+    load_phase_dir,
     load_phase_manifest,
     write_phase_manifest,
 )
 
 __all__ = [
+    "MANIFEST_FILENAME",
     "EgmBankEntry",
     "FigureEntry",
     "FigureSpec",
@@ -77,6 +80,7 @@ __all__ = [
     "ViewState",
     "load_figure_spec",
     "load_observation",
+    "load_phase_dir",
     "load_phase_manifest",
     "write_figure_spec",
     "write_observation",
