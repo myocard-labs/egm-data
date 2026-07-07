@@ -1,6 +1,6 @@
 # myocard-egm-data
 
-> I/O and dataset ergonomics for the intracardiac-EGM stack: readers and writers for every on-disk format defined by [`myocard-egm-contracts`](https://github.com/myocard-labs/egm-contracts), plus PyTorch `Dataset` wrappers, patient-aware splits, and the per-trace augmentation/normalization transform.
+> Pure I/O for the intracardiac-EGM stack: readers and writers for every on-disk format defined by [`myocard-egm-contracts`](https://github.com/myocard-labs/egm-contracts) — HDF5 banks, run records, predictions, and phase-manifest JSON.
 
 Part of the [myocard-labs](https://github.com/myocard-labs) cardiac signal-processing toolkit.
 
@@ -15,9 +15,7 @@ What this package contains:
 - **Bank readers and writers** for the HDF5 schemas — `synthetic_bank` (clean or noise-mixed EGMs), `iafdb_bank` (calibrated + band-passed segments), and `noise_bank` (low-amplitude windows used as additive noise by the synthetic mixer). Source-specific Pydantic models from `egm-contracts` get converted into the unified in-memory `ClassifierBank`. All banks carry stable cross-artifact ids (egm-contracts v0.5.0): readers surface them, and producer-bank writers require them on new files.
 - **Record readers and writers** for the JSON / CSV training and evaluation artifacts — `training_run_record` (run.json), `training_metrics` (metrics.csv), `egm_class_model_metadata` (inference-side model metadata for the 1-D EGM-classifier family), and `noise_bank_run_record` (extraction provenance sidecar for a noise bank). Every `build_*` returns a typed Pydantic model; every `write_*` accepts one; every `load_*` returns one.
 - **Phase-artifact readers and writers** (`myocard_egm_data.phases`) for the cross-artifact-linkage JSON formats added in egm-contracts v0.5.0 — the per-phase `manifest.json`, observations, and figure specs that organize a project phase's artifacts. Typed `load_*` / `write_*` over each schema.
-- **PyTorch `Dataset` wrappers** including the `TraceTransform` per-trace normalize+pad+augment pipeline, the patient-aware split, and a `build_dataloaders` convenience that ties banks + splits + datasets together.
-
-Schema versioning lives in `myocard-egm-contracts`; this package is the thin I/O layer over those schemas.
+Schema versioning lives in `myocard-egm-contracts`; this package is the thin I/O layer over those schemas. The torch-based training-data layer (`Dataset` wrappers, patient-aware split, per-trace augmentation) lives in its sole consumer, [`myocard-egm-classifier`](https://github.com/myocard-labs/egm-classifier).
 
 ---
 
@@ -27,12 +25,6 @@ From source during pre-1.0 iteration:
 
 ```bash
 pip install git+https://github.com/myocard-labs/egm-data.git
-```
-
-With the optional torch extras (needed for `myocard_egm_data.datasets`):
-
-```bash
-pip install "myocard-egm-data[torch] @ git+https://github.com/myocard-labs/egm-data.git"
 ```
 
 Editable install for development:
@@ -51,16 +43,10 @@ pre-commit install
 ```python
 from myocard_egm_data.banks import load_synthetic_bank_as_classifier
 from myocard_egm_data.records import build_training_run_record, write_training_run_record
-from myocard_egm_data.datasets import build_dataloaders
 
 # Load a synthetic bank and convert it to the unified ClassifierBank.
-cb = load_synthetic_bank_as_classifier("data/hybrid_v1.h5")
+cb = load_synthetic_bank_as_classifier("data/noise_mixed_v1.h5")
 print(cb.n_traces, cb.n_samples_first)
-
-# Patient-aware split + per-trace transform + DataLoader, all in one call.
-bundle = build_dataloaders(cb, input_length=512, batch_size=64, ...)
-for x, y in bundle.train:
-    ...
 
 # At end of training, write the run record as a typed Pydantic model.
 record = build_training_run_record(
@@ -71,7 +57,7 @@ write_training_run_record("out/run.json", record)
 
 See [docs/usage.md](docs/usage.md) for full walkthroughs of the per-schema build/write/load helpers.
 
-The bank, record, splits, and augmentation packages do not import torch. Only `myocard_egm_data.datasets` does — a notebook or viewer can install without it.
+This is a pure I/O package — it does not import torch, so a notebook, viewer, or analysis script can install it without pulling in torch. The torch-based training-data layer lives in [`myocard-egm-classifier`](https://github.com/myocard-labs/egm-classifier).
 
 ---
 
