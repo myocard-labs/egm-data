@@ -321,8 +321,8 @@ the run records / predictions the classifier emits.
 ```python
 from myocard_egm_data.banks import write_classifier_bank, load_classifier_bank
 
-write_classifier_bank(hybrid, "out/hybrid_eval.cbank.h5")
-again = load_classifier_bank("out/hybrid_eval.cbank.h5")
+write_classifier_bank(hybrid, "out/hybrid_eval.classifier.h5")
+again = load_classifier_bank("out/hybrid_eval.classifier.h5")
 ```
 
 The on-disk format is documented in `project/classifier_bank_format.md`
