@@ -107,16 +107,16 @@ def _one_trace_bank(artifact_id: str | None) -> ClassifierBank:
 
 def test_classifier_bank_id_round_trips(tmp_path: Path) -> None:
     bank = _one_trace_bank("upred_iafdb_v1_5_2026-06-27")
-    write_classifier_bank(bank, tmp_path / "c.cbank.h5")
-    loaded = load_classifier_bank(tmp_path / "c.cbank.h5")
+    write_classifier_bank(bank, tmp_path / "c.classifier.h5")
+    loaded = load_classifier_bank(tmp_path / "c.classifier.h5")
     assert loaded.id == "upred_iafdb_v1_5_2026-06-27"
     assert loaded.schema_version == "0.2"
 
 
 def test_classifier_bank_id_optional_round_trips(tmp_path: Path) -> None:
     bank = _one_trace_bank(None)
-    write_classifier_bank(bank, tmp_path / "c.cbank.h5")
-    loaded = load_classifier_bank(tmp_path / "c.cbank.h5")
+    write_classifier_bank(bank, tmp_path / "c.classifier.h5")
+    loaded = load_classifier_bank(tmp_path / "c.classifier.h5")
     assert loaded.id is None
 
 

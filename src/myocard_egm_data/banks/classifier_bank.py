@@ -290,7 +290,7 @@ class ClassifierBank:
         """Length of the first trace, for quick inspection / logging.
 
         Traces in a ClassifierBank are NOT required to share a length.
-        The training-time :class:`~myocard_egm_data.augmentation.TraceTransform`
+        The training-time trace transform in the consumer (egm-classifier)
         handles per-trace pad/crop, so a bank can carry mixed-length
         traces and the dataset wrapper will still produce a fixed-T
         tensor for the model. Use this property only for diagnostics; if
