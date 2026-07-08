@@ -46,7 +46,7 @@ classifiers = [
 # contracts package (the format truth). No torch — this is a pure I/O layer;
 # the torch-based training-data layer lives in myocard-egm-classifier.
 dependencies = [
-  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.5.2",
+  "myocard-egm-contracts @ git+https://github.com/myocard-labs/egm-contracts.git@v0.5.3",
   # numpy 2.5+ ships type stubs that use PEP 695 "type X = Y" alias
   # syntax, which mypy refuses to parse under ``python_version = "3.10"``
   # (the version we type-check against to keep 3.10 runtime support).

@@ -23,6 +23,8 @@ code-placement audit. egm-data is now a **pure I/O** library:
   `augmentation/` (`TraceTransform`) — plus their tests.
 - **Dropped** the `[torch]` optional extra and the `torch.*` mypy override;
   egm-data no longer imports torch anywhere.
+- **Re-pinned** `myocard-egm-contracts` `v0.5.2 → v0.5.3` (optional `ArtifactId`
+  date suffix; coordinated bump).
 - **Consumers** re-pin `myocard-egm-data[torch] v0.4.x` to `myocard-egm-data v0.5.0`
   (no extra).
 
