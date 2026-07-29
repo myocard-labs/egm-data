@@ -1,0 +1,467 @@
+# egm-data — Phase 1.5 implementation plan
+
+**Repo:** egm-data · **Phase:** 1.5
+**Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
+**Status:** planning · **Progress:** 0/12 steps done
+**Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
+
+egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
+matching reader/writer → synthetic-egm-pipeline (SEP12), egm-studio (STU6), iafdb-pipeline, and
+egm-classifier all unblock in parallel. Nothing in this plan can start before the contracts tag, and
+four repos wait on its release. Delivery shape (Daniel, 2026-07-28): **one `development` branch,
+staged per-schema commits, one PR, one tag.**
+
+---
+
+## Scope — what this plan covers
+
+Per the coverage note in `intracardiac-platform/project/cross_artifact_linkage_design.md`
+(Proposed changes): the estimate must cover **all six** schema groups P1–P6, not just the two core §3
+rows — the backlog-driven touches land in the same coordinated PR.
+
+| Phase item | What it needs from this repo | Steps |
+|---|---|---|
+| DAT1 (P2) | `synthetic_bank` **2.0** reader + writer (`simulations/` group, collapsed `traces/`, θ-spec) — the **typed `SyntheticBank` is the exposed artifact** egm-studio's T4 views read θ from | S5–S6 |
+| DAT1 (P2) | synthetic→`ClassifierBank` conversion — **θ-free**; carries signal + label + the `LabelPolicy` identity + the `simulation_id` / `pair_index` join key *(project-lead, 2026-07-28 — supersedes the θ-materialization scope)* | S7 |
+| DAT1 (P2) — **T4 join** | **Bank ⋈ bank joined view** — each ClassifierBank trace paired with its typed `SimulationConfig` on `simulation_id`; STU1/STU4/STU5 read θ off the typed object *(CL-024 §2 — option **1b**, in 1.5)* | S8 |
+| *(deferred)* | **Generic θ resolver + predictions leg** — `TunedParam.path` resolution and the FN-vs-θ join (predictions ⋈ ClassifierBank ⋈ θ). Deferred with the path grammar *(CL-024 §2)*; S8 is the subset the phase needs. → `roadmap.md` at S12 | — |
+| DAT3 (P1) | `training_run_record` 1.2 I/O — `make_epoch_record` gains **optional `train_metrics=None`** *(CL-022)* | S9 |
+| DAT3 (P1′) | `training_metrics` **CSV** — write + read the six `train_*` scalar columns *(Daniel, 2026-07-28 — see design note 5)* | S10 |
+| B18 (P1) | Emit `HeldOutTest.metrics` / `.reliability` in parity with the val bundle | S9 |
+| B15 (P1) | Stop documenting `host` as a well-known `run` key (convention; no schema field) | S9 |
+| B14 (P1) | Relative artifact paths — **egm-classifier-side convention**; egm-data change is docs only | S9 |
+| B16 (P3) | `ArtifactId` **content** check — role prefix ↔ bank content (`tbank_` has labels, `upred_` doesn't) | S11 |
+| *(CL-024 §3)* | **Join-key writer check** — `write_classifier_bank` rejects `sim_id`-keyed traces; the only place the convention can be enforced (no JSON Schema — CL-012) | S7 |
+| B19 (P4) | Round-trip absent `produced_by_package` / `produced_by_version` cleanly | S4 |
+| B17 (P4) | Relative in-phase manifest paths — **egm-studio-side convention**; **no egm-data change** | — |
+| B11 (P6) | `iafdb_bank` 1.3 — stamp + surface the optional `run_record_path` sidecar pointer | S3 |
+| *(CL-053 / IAF3)* | `iafdb_bank` 1.3 — carry the per-trace **`activation_position`** `[0,1]` column on read + write; **must not** reach the ClassifierBank | S3 |
+| *(CL-062 / SEP2)* | `synthetic_bank` 2.0 — same **`activation_position`** column on the typed `SyntheticBank` read + write; same negative test on the converter | S5 · S6 · S7 |
+| B20 (P5) | `noise_bank` 1.1 — stamp + surface the `bank_id` root attr | S2 |
+
+**Not in scope.** The `iafdb_bank_run_record` *schema* (P6 flags it deferred — B11 needs only the
+pointer). Everything on the far side of a boundary: producer behavior, GUI adoption, classifier emit.
+
+## Design notes
+
+Local decisions taken before coding. Notes 1–3 and 5 were escalations; **all four came back resolved
+in [CL-037](../../intracardiac-platform/phases/phase_1_5/coordination_log.md) on 2026-07-29** and are
+kept here as the record of what was decided, not as open questions.
+
+1. **✓ Release version — v0.6.0, not v0.5.x** *(CL-037 item 2, accepted)*. Design §7 originally targeted
+   "egm-data v0.5.x", but P2 breaks *egm-data's own* public API: `read_synthetic_bank_hdf5` returns a
+   differently-shaped model, `write_synthetic_bank` takes one, and `synthetic_bank_to_classifier`'s
+   signature changes. Pre-1.0, a minor bump is the honest signal to the four re-pinning consumers.
+   **The §7 target now reads v0.6.0**; S12 bumps to it.
+
+2. **✓ `SyntheticLabelFn` becomes an override, not the source of truth** *(CL-037 item 3 → routed as
+   **CL-038** to egm-classifier + egm-studio)*. Today the synthetic converter derives labels
+   consumer-side from `traces.fibrosis_density` via a `label_fn`. Under P2 the bank *carries* the label
+   — a plain int per trace plus a per-sim `LabelPolicy` and a `{int: name}` map — so the converter
+   defaults to the bank's own label + names and `label_fn` survives only as an explicit re-labeling
+   override. **Non-breaking**: existing calls passing `label_fn` still work, but consumers should omit
+   it on the v0.6.0 re-pin and take the bank's label.
+
+3. **✓ P3's egm-data half was already shipped** *(CL-037 item 4 — **P3 amended**)*. P3 listed "add
+   per-trace `split` + `prediction` columns" to `ClassifierBank` as outstanding. Both already exist on
+   `ClassifierTrace` and already round-trip through `classifier_bank_io` (sentinel-mask pattern: `split`
+   as `''`-for-`None`, `has_prediction` / `pred_label_pred` / `pred_label_prob` / `pred_logits_json`).
+   **P3's egm-data half is therefore just the B16 content check** — scored and stepped accordingly.
+
+4. **`simulations/` FK-join encoding is ours to validate.** `synthetic_bank_schema_design.md` §8
+   explicitly leaves egm-data to "confirm the `simulations/` group + FK-by-`simulation_id` join
+   performs for egm-studio's table view, or pick a better encoding." Note this got *lighter* under the
+   2026-07-28 correction: the converter no longer joins per-sim config onto every trace, only
+   `label_names` + the `LabelPolicy` identity, so the hot path is now egm-studio reading the typed
+   `SyntheticBank` directly rather than anything in the conversion. S7 still records the timing on a
+   realistic bank; if the join is slow the fix is a vectorized lookup on our side, **not** a schema
+   change (that would reopen Wave 1).
+
+5. **✓ `metrics.csv` gains train columns too — and it is now scoped into v0.6.0** *(Daniel 2026-07-28;
+   CL-037 item 1, accepted 2026-07-29)*. P1 originally specified `train_metrics` only on `EpochRecord`
+   (the JSON run record) and was silent on the separate `training_metrics` CSV, whose `_epoch_to_row`
+   pulls well-known scalars from `val_metrics` alone. Because that schema is
+   `additionalProperties: false`, an un-bumped validator would have **rejected** the new CSV — so this
+   was a genuine gap, not a nicety. **Resolution:** `training_metrics.schema.json` gains six nullable
+   properties — `train_auroc` / `train_accuracy` / `train_precision` / `train_recall` / `train_f1` /
+   `train_ece` — folded into **P1 + CON3** in the egm-contracts **v0.6.0** Wave-1 bump, so it cannot
+   miss the release. Both sub-decisions went the way I recommended:
+   - **Paired `x-csv-column-order`** — `epoch, lr, train_loss, train_auroc…train_ece, val_loss,
+     val_auroc…val_ece, epoch_seconds`. T5 exists to make train-vs-val divergence visible and the
+     paired layout reads far better in a spreadsheet; consumers read by header name, so reordering is
+     safe.
+   - **No `train_reliability` in the CSV** — consistent with P1's FB-10 deferral; the CSV carries only
+     scalars and ECE is already the scalar summary of the bins. The train path mirrors the val path:
+     six scalars in, nested `confusion` dropped.
+
+6. **B14 / B15 / B17 are conventions, not egm-data code.** B15 (drop `host`) and B14 (relative paths)
+   are producer-side writes; egm-data's part is removing `host` from the documented well-known keys in
+   `build_training_run_record`'s docstring and `docs/usage.md`. B17 is egm-studio's curation
+   convention — `path` stays `type: string` and the manifest I/O is a Pydantic pass-through, so there
+   is nothing here to change.
+
+7. **No back-compat path for `synthetic_bank` 1.1.** Per the investigation's decision 2 (new bank type
+   only, nothing load-bearing yet), `read_synthetic_bank_hdf5` simply stops accepting 1.1 — the
+   existing `_check_version` / `supported_versions` guard already produces the right error. No legacy
+   reader, no migration shim.
+
+8. **`ClassifierBank` stays at 0.2 — no second breaking change in Wave 1.** *(Revised 2026-07-28 by the
+   §12 reframe.)* The earlier θ-materialization scope would have put a typed `generation_params` field
+   on `ClassifierBankMetaData`, adding a dataset to the `banks/` group and forcing
+   `CLASSIFIER_BANK_VERSION` 0.2 → 0.3 — a second breaking change rippling to egm-classifier and
+   egm-studio via the predictions bank. **That is now retired.** θ never lands on the ClassifierBank, so
+   the dataclass and the HDF5 layout are untouched and Wave 1 keeps exactly one breaking change (the
+   `synthetic_bank` restructure). The `LabelPolicy` **identity** rides in the existing generic
+   `bank_metadata` dict as a string — deliberately not a typed field, precisely to avoid reintroducing
+   the bump for something that is an identifier rather than a structure any consumer walks.
+
+9. **θ-path resolution roots — deferral confirmed** *(CL-024 §2: "no `TunedParam.path` grammar into
+   v0.6.0")*. The generic resolver will eventually walk each `TunedParam.path`, and the example paths in
+   `synthetic_bank_schema_design.md` §4.1 do **not** all share a root: `substrate.density`,
+   `cell_model.courtemanche.params.g_CaL_scale`, and `backend.diffusion` resolve against the
+   **per-sim** objects; `mixer.snr_db` does not — there is no `mixer` object in the per-sim config;
+   and an electrode knob would want `electrodes.pairs[…].height_mm`, resolving **per-pair** via the
+   `pair_index` FK. Three roots, disambiguated by the first path segment. Nothing in 1.5 depends on
+   this any more, so it is **not blocking** — but the legal root vocabulary belongs in the
+   `TunedParam.path` field description while the schema is being written, not rediscovered later by
+   whoever builds the join. **→ egm-contracts, low priority, this phase if convenient.**
+
+10. **`noise_bank` version-number collision in our own roadmap.** P5 takes `noise_bank` 1.0 → **1.1**
+   for `bank_id`, but this repo's `roadmap.md` already reserves "1.1" for the *deferred* noise-side
+   calibration work (`calibration_scalar` + `per_trace_provenance.lead`), which design §4 explicitly
+   keeps out of this phase. S10 renumbers that roadmap entry to **1.2** so the two don't collide.
+
+**Cross-repo alignment (read from `egm-contracts/project/phase_1_5_plan.md`, 2026-07-28).** The
+contracts chat flowed down in parallel today and reached the same scope conclusion (all six groups in
+one PR + tag) and the same anchor sizing (CON1 = L, CON3 = S). Two of its decisions shape S5–S6 here:
+the seven per-function polymorphic objects + `TunedParam` + `generation_params` land as `$defs` in a
+**single new `simulation_config.schema.json`**, codegen'd to **one importable module** — so this repo
+imports one module, not eight; and `x-hdf5-mapping` grows a `simulations_group`, with the HDF5
+validator decoding each `*_json` column **per row**, which is exactly what S6's round-trip test must
+satisfy. Their plan still lists the `ClassifierBank` `split` / `prediction` columns as outstanding
+egm-data work — design note 3 above says otherwise; the project-lead should reconcile.
+
+## Steps
+
+Each step is one focused commit that ends green (its own tests + `ruff format` + `ruff check` +
+`mypy`). Order is deliberate: **S2–S4 are the cheap additive trio**, run first so they prove the
+v0.6.0 codegen and the re-pin are sound before S5–S8 sink real time into the breaking restructure —
+Daniel's migration-wave de-risking logic applied one level down. Status: ☐ todo · 🔨 wip · ✅ done.
+
+### S1 — Re-pin egm-contracts v0.6.0, suite green ☐ (0.5–2 h)
+- **Change:** `pyproject.toml` dependency pin `v0.5.3 → v0.6.0`; fix any import/name breakage from the
+  regenerated models. **No behavior change.**
+- **Verify:** full `pytest` suite green unchanged; `mypy` clean against the new `py.typed` models.
+- **Depends on:** egm-contracts v0.6.0 **merged + tagged** (external gate — nothing here starts first).
+
+### S2 — P5 `noise_bank` 1.1 `bank_id` (B20) ☐ (1–3 h)
+- **Change:** `banks/noise_bank.py` — `write_noise_bank` stamps `f.attrs["bank_id"]` (optional-in-schema,
+  **required-on-write**, matching the existing `write_synthetic_bank` / `write_iafdb_bank` guard);
+  `read_noise_bank_hdf5` surfaces it via the `_opt_str_attr` pattern (`None` on legacy banks).
+- **Verify:** round-trip test asserting the id survives; a legacy bank without the attr still reads with
+  `bank_id is None`; write-without-id raises.
+- **Depends on:** S1.
+
+### S3 — P6 `iafdb_bank` 1.3 — `run_record_path` (B11) + `activation_position` (CL-053) ☐ (1–3 h)
+- **Change:** two additive pieces on the same 1.3 bump. **(a)** `banks/writers.py` `write_iafdb_bank`
+  stamps the optional relative sidecar pointer; `banks/readers.py` `read_iafdb_bank_hdf5` reads it
+  through `_opt_str_attr`. **(b)** *(CL-053)* both carry the new per-trace `traces/activation_position`
+  column — a `[0,1]` float, optional-in-schema / required-on-write in activation mode. Field lands here
+  in Wave 1 **unpopulated** (IAF3); iafdb-pipeline fills it in Wave 2 (IAF1).
+- **Verify:** round-trip with and without the pointer; round-trip of `activation_position` including the
+  absent case; the contracts file-level validator accepts every combination. **Plus a negative test:**
+  `iafdb_bank_to_classifier` does **not** propagate `activation_position` into `trace_metadata` — it is
+  IAFDB provenance for STU5, and the ClassifierBank stays source-agnostic (same rule that keeps θ off
+  it). Worth pinning by test precisely because the converter is where it would leak.
+- **Depends on:** S1.
+
+### S4 — P4 `phase_manifest` optional `produced_by_*` (B19) ☐ (0.5–2 h)
+- **Change:** likely **no production code** — `phases/phase_manifest.py` is a Pydantic pass-through and
+  `_write_pydantic_json` already omits unset optionals. This step's deliverable is the **test** that
+  pins the behavior, plus whatever the loosened `required` arrays actually break.
+- **Verify:** a manifest entry with both `produced_by_*` absent round-trips (write → read → equal) and
+  the keys are **omitted**, not written as `null`.
+- **Depends on:** S1.
+
+### S5 — DAT1a · `synthetic_bank` 2.0 **reader** ☐ (2.5–5 h)
+- **Change:** `banks/readers.py` — replace the flat-root-attr read with: root attrs
+  (`schema_version` / `created_utc` / `bank_id` / `description` / `fs_hz` / `trace_duration_ms` /
+  `noise_bank_source` / `generation_params_json` = the θ-spec) + a new `simulations/` group decoding
+  nine `*_json` columns (`geometry` / `cell_model` / `substrate` / `activation` / `electrodes` /
+  `backend` / `label_policy` / `label_names` / `substrate_summary`) into the typed polymorphic
+  contracts models + the collapsed `traces/` (`signal`, `simulation_id`, `pair_index`, `label` int,
+  `snr_db`, `noise_record`, `noise_channel`, and — *CL-062* — the optional `activation_position`
+  `[0,1]` float, absent in Wave 1 and populated by SEP2 in Wave 2). Drop the removed columns and the old
+  `fibrosis_params_json` / `electrode_config_json` / `mixer_config_json` / `experiment_config_json`
+  root attrs.
+- **Verify:** unit test reading a hand-built 2.0 fixture; every `*_json` column decodes to the right
+  discriminated variant; a 1.1 fixture raises the unsupported-version error.
+- **Depends on:** S1.
+
+### S6 — DAT1b · `synthetic_bank` 2.0 **writer** + round-trip ☐ (2–4 h)
+- **Change:** `banks/writers.py` — mirror S5. `simulations/` datasets sized `(M,)`; `traces/` sized
+  `(N,)`; `label` as `int64`; θ-spec serialized to `generation_params_json` with `sort_keys=True` for
+  deterministic bytes; `activation_position` written when present and omitted when not *(CL-062 — the
+  writer half, which CL-062's scope note doesn't name but SEP12 needs, since the producer writes
+  through this function)*.
+- **Verify:** **round-trip test** (model → write → read → equal) that also runs the contracts
+  file-level validator — the line this repo's tests have always held.
+- **Depends on:** S5.
+
+### S7 — DAT1c · θ-free `synthetic_bank_to_classifier` ☐ (2–4 h)
+- **Change:** `banks/converters.py` — take `label_truth` from the bank's int `label` and
+  `ClassifierBank.labels` from `label_names` (per design note 2, `label_fn` demotes to an override);
+  record the `LabelPolicy` **identity** in `bank_metadata` (design note 8 — a string, not a typed
+  field). Per-trace, keep `patient_id` (`str(simulation_id)`, which egm-classifier's patient-aware split
+  depends on), `simulation_id` + `pair_index` as the **join key**, and — **unchanged from today** — the
+  noise-mixing provenance (`snr_db`, `noise_record`, `noise_channel`, `seed`). The five
+  generation-config fields the old converter flattened (`fibrosis_density`,
+  `fibrosis_density_realized`, `electrode_row`, `electrode_height_mm`, `stim_edge`) are **dropped, not
+  relocated** — they live on the `synthetic_bank`, which S5 already exposes typed. Update
+  `load_synthetic_bank_as_classifier`.
+- **Deliberately not touched:** the noise-mixing provenance is redundant with the `synthetic_bank`
+  (reachable via the same `simulation_id` join) and is a candidate for removal later, but 1.5 does not
+  re-litigate it *(Daniel, 2026-07-28)*. Logged in `roadmap.md` so it outlives this plan.
+- **Verify:** conversion test asserting no θ / generation-config key reaches `trace_metadata` —
+  **including `activation_position`** *(CL-062, the synthetic twin of S3's iafdb negative test)*; labels
+  come from the bank with no `label_fn` supplied and an explicit `label_fn` still overrides;
+  `patient_id` unchanged. Plus the **key guarantee** the §12 reframe asks for — assert `simulation_id`
+  is reachable from a *prediction* row end-to-end (bank → predictions → back), since that is what makes
+  the deferred correlation join possible. Plus the conversion-cost check from design note 4 (~2000
+  traces), recorded here.
+- **Also here — the join-key writer check** *(CL-024 §3)*: `write_classifier_bank` rejects a bank whose
+  traces key the join as `sim_id` rather than `simulation_id`. The producer renames at SEP12; contracts
+  cannot pin this (the ClassifierBank is numpy-backed with no JSON Schema — CL-012), so egm-data's
+  writer is the only place the convention can be enforced. Test: a `sim_id`-keyed bank raises, with both
+  names in the message.
+- **Depends on:** S6.
+- **Note:** this step got *smaller* under the 2026-07-28 correction — dropping fields is less work than
+  joining them. The estimate holds because the `LabelPolicy` id, the key-guarantee test, and the writer
+  check replace it.
+
+### S8 — DAT1d · bank ⋈ bank joined view (T4) ☐ (2–4 h)
+- **Change:** new read-time joined view in `banks/` — given a synthetic-sourced ClassifierBank plus its
+  `SyntheticBank`, return each trace paired with its typed `SimulationConfig`, joined on
+  `simulation_id`. **Typed object out, no θ flattening** — STU1/STU4/STU5 read θ off the config the same
+  way they read any other field. Per CL-012 θ is stored **per-simulation**, so this join needs only
+  `simulation_id`; `pair_index` is required solely for per-trace correspondence *between* the two banks
+  and is out of scope here. Read-time only — **nothing persists onto the ClassifierBank**, so
+  `CLASSIFIER_BANK_VERSION` stays 0.2 and Wave 1 keeps exactly one breaking change.
+- **Verify:** join test over a multi-sim bank asserting every trace resolves to the right
+  `SimulationConfig`; a trace whose `simulation_id` is absent from `simulations/` raises rather than
+  silently yielding `None`; an IAFDB-sourced ClassifierBank is rejected (the join is synthetic-only by
+  nature). Timing on a realistic bank (~2000 traces) recorded here, closing out design note 4.
+- **Depends on:** S5 (the typed `SyntheticBank`) + S7 (the ClassifierBank carrying the key).
+- **Not in scope:** generic `TunedParam.path` resolution and the predictions leg — both deferred with
+  the path grammar per CL-024 §2; logged to `roadmap.md` at S12.
+
+### S9 — DAT3a · `training_run_record` 1.2 JSON (P1 · B18 · B15 · B14) ☐ (2–5 h)
+- **Change:** `records/training_run_record.py` — `make_epoch_record` gains a **`train_metrics=None`
+  keyword-optional** parameter *(CL-022)*, given the same treatment as `val_metrics` (flat dict in,
+  non-finite floats sanitized). **Optional by design:** egm-classifier's CLF5 Wave-1 migration writes
+  1.2 records *without* train metrics, which is what keeps the migration wave separate from the feature
+  wave. Per P1, `train_reliability` bins are out of scope (→ FB-10), so a `"reliability"` key inside
+  `train_metrics` is **dropped, not split into a second field** — deliberately asymmetric with the val
+  path. Also: `build_training_run_record` emits `HeldOutTest.metrics` / `.reliability` in parity with
+  the val bundle (B18); drop `host` from the documented well-known `run` keys (B15) and note the
+  repo-relative path convention (B14).
+- **Verify:** round-trip of a record carrying train + val + test bundles through the contracts
+  validator; a record built with `train_metrics` omitted still validates (the CLF5 migration case); a
+  `"reliability"` key inside `train_metrics` is dropped and produces no second field; `best_epoch` still
+  selects on `val_metrics` only (train metrics must not leak into selection).
+- **Depends on:** S1. Parallel with S5–S8 (different module).
+
+### S10 — DAT3b · `training_metrics` CSV train columns ☐ (1–2 h)
+- **Change:** `records/training_metrics.py` — `_epoch_to_row` pulls the six well-known scalars from
+  `EpochRecord.train_metrics` as well as `val_metrics` (dropping nested `confusion`, exactly as the val
+  path does); `write_training_metrics` follows the schema's updated `x-csv-column-order`;
+  `_coerce_row` / `load_training_metrics` parse the new columns back, with the same empty-cell → `None`
+  handling the nullable `val_*` columns already use.
+- **Verify:** epochs → CSV → rows round-trip with train and val populated; a non-finite train metric
+  writes an empty cell and reads back as `None`; the contracts row validator accepts the output.
+- **Depends on:** S9, and on egm-contracts' `training_metrics` column addition — **now scoped into P1 +
+  CON3 for v0.6.0** (design note 5, CL-037 item 1), so this arrives with the same tag as everything
+  else and is no longer conditional.
+
+### S11 — B16 · `ArtifactId` role ↔ content consistency check ☐ (2–5 h)
+- **Change:** new content check in `banks/` — given a bank and its stable id, assert the role prefix
+  matches what the bank actually holds (a `tbank_` has `label_truth`; a `upred_` has none; a `lpred_`
+  has both labels and predictions; an `nbank_` is a noise bank). Wired into the writers so a
+  mislabelled bank can't be written. The **prefix-is-a-known-role** validation itself is
+  egm-contracts' half.
+- **Verify:** parametrized test over each role — correct content passes, mismatched content raises with
+  a message naming both the id and what was found.
+- **Depends on:** S1. Parallel with S5–S10.
+
+### S12 — Docs + phase-exit ☐ (1–3 h)
+- **Change:** `docs/usage.md` (the 2.0 bank example, the converter's new label behavior, the fact that
+  θ is read from the typed `SyntheticBank` and **not** from a ClassifierBank, the dropped `host` key),
+  `project/classifier_bank_format.md` if S10 touches the format, `CHANGELOG.md` `[Unreleased]` → the
+  release entry, `roadmap.md` — remove the now-shipped `iafdb_bank` 1.3 and `noise_bank` `bank_id` /
+  `produced_by`-optional items, retire the Phase-2 "Polymorphic `stimulation` encode/decode" entry
+  (pulled forward into this phase and shipped as part of P2), renumber the deferred
+  now-shipped Phase-1.5 pointer block (the roadmap was aligned at planning on 2026-07-29 — the
+  renumbering, the Phase-2 removal, and the deferred correlation-join + noise-provenance entries are
+  already in). Version bump to **v0.6.0** per design note 1.
+- **Verify:** the full pre-PR run in `intracardiac-platform/project/pr_checklist.md` — `ruff format src
+  tests` **and** `ruff check`, `mypy`, `pytest`, docs sync, CHANGELOG.
+- **Depends on:** all prior steps.
+
+**Parallelism:** S2–S4 are mutually independent. The DAT1 chain is S5→S6→S7→S8 (S8 also needs S5's
+typed reader). S9→S10 is a second chain that runs alongside it, and S11 is independent of everything.
+Only S1 and S12 are serializing.
+
+## Effort tracking
+
+Method: `intracardiac-platform/project/investigations/estimate_vs_actual_tracking.md`.
+Daniel speaks the markers (`start` / `switch` / `break` / `resume` / `stop`); this chat stamps the time
+from `date` and computes active = marked span − breaks. **Backstop:** unmarked silence > **2h** = away.
+Rolls up at cleanup to design §6, §11, and `estimation_ledger.csv`.
+
+> **Not tracked this phase** *(Daniel, 2026-07-29)*. Flow-down tracking, organization, and effort
+> tracking were **missed for Phase 1.5** across the project. Daniel + the project-lead chat will design
+> the methodology and it lands in a **later phase**, not retrofitted here — so this repo's session log
+> stays empty, no reconstruction from transcripts is attempted, and `Actual` / `Elapsed` below are
+> **not filled at cleanup**. egm-data contributes **estimates only** to §6 and appends **no row** to
+> `estimation_ledger.csv` for 1.5. This supersedes CL-036's `measured=reconstructed` instruction and
+> CL-024 §5b's flow-down-counts-as-issue-work rule *for this phase* — both stand as method for whenever
+> tracking actually starts. Consequence to accept knowingly: 1.5 yields **no calibration data**, so the
+> ledger stays cold and Phase-2 estimates are still by-analogy.
+
+The method below is retained for the phase that adopts it.
+
+### Estimate basis
+
+The ledger is **empty** (header only), so per the §8 cold-start rule these are **estimates by analogy
+with deliberately wide ranges**, not `points × rate`. Complexity is scored against the published
+anchors: **S** = the `noise_bank` `bank_id` add (P5) — which is literally S2 of this plan — and **L** =
+the SEP12 `synthetic_bank` 2.0 migration, of which DAT1 is the I/O half. Implied rate lands at roughly
+1–2.8 h/point; the first cleanup replaces all of this with measured velocity.
+
+| Issue | Task-type | Cx | Estimate | Steps | Active | Elapsed | Sessions |
+|---|---|---|---|---|---|---|---|
+| DAT1 (incl. the 1b T4 join) | schema | **XL = 8** | 8.5–17 h | S5–S8 | | | |
+| DAT3 (+B18/B15/B14) | schema | **M = 3** | 3–7 h | S9–S10 | | | |
+| B16 | schema | **S = 2** | 2–5 h | S11 | | | |
+| B20 | schema | **S = 2** | 1–3 h | S2 | | | |
+| B11 + CL-053 `activation_position` | schema | **S = 2** | 1–3 h | S3 | | | |
+| B19 | schema | **XS = 1** | 0.5–2 h | S4 | | | |
+| *re-pin + docs + PR* | overhead | — | 1.5–5 h | S1, S12 | | | |
+| **Repo total** | | **18 pts** | **17.5–42 h** | | | | |
+
+Sizing rationale: **DAT1 = XL**, settled after three revisions on 2026-07-28. The reader / writer /
+θ-free conversion core is a clean **L**, matched to the published SEP12 anchor (breaking restructure,
+mechanical serialization, no new algorithm). CL-024 §2 then added the **1b T4 join** — a fourth module
+and a new capability, but the *narrow* one: a typed-object join on a single key, with no
+`TunedParam.path` grammar and nothing persisted. That is +3 points to **XL = 8**, and it is a **low XL**
+— well short of the STU4 anchor (a sub-package with a GP emulator), and cheaper than the XL this row
+briefly carried mid-day, which also included a generic path resolver and a `ClassifierBank` 0.3 bump.
+Worth flagging for the ledger so the XL reference class isn't skewed by a row that only just crossed
+the threshold. **DAT3 = M**, raised from S on 2026-07-28 when the
+CSV was folded in (design note 5): still purely additive with zero novelty, but now two modules and two
+on-disk formats to round-trip instead of one — which sits it right at the published M anchor (CLF2
+train-split metrics), whose producer side this is the I/O half of. **B16 = S** — single module, new
+check, ordinary test burden. **B19 = XS** — a test that pins existing behavior. **B20 = S**
+rather than XS only to stay consistent with the published anchor. **B11 raised XS → S on 2026-07-29**
+when CL-053 added `activation_position`: the step now carries a per-trace *column* through both reader
+and writer, not just an optional root attr, which is the same shape of work as B20's — plus the
+negative test that keeps it out of the ClassifierBank.
+
+### Session log
+
+<!-- one row per marker; Daniel speaks the marker, the chat stamps the time from `date` -->
+
+| Timestamp (local) | Event | Focus (issue) | Note |
+|---|---|---|---|
+| | | | |
+
+## Notes / decisions log
+
+- **2026-07-28** — Plan created at flow-down. Scope confirmed with Daniel as **all six schema groups**
+  (P1–P6), not just the §3 core rows DAT1/DAT3, per the coverage note in
+  `cross_artifact_linkage_design.md`. Delivery = one branch, staged commits, one PR.
+- **2026-07-28** — Found P3's egm-data half (per-trace `split` + `prediction`) **already shipped** in
+  `ClassifierTrace` + `classifier_bank_io`; P3 reduces to the B16 content check here. Design note 3.
+- **2026-07-28** — Three items escalated to the project-lead: the **v0.6.0 vs v0.5.x** release-version
+  question (note 1), the **`SyntheticLabelFn` signature change** visible to egm-classifier + egm-studio
+  (note 2), and whether **`metrics.csv` gains train columns** alongside the run record (note 5).
+- **2026-07-28** — **Note 5 answered — yes, train metrics go to the CSV too** (Daniel). Split S8 into
+  S8 (run-record JSON) + **new S9** (metrics CSV); renumbered B16 → S10 and docs → S11. **DAT3 rescored
+  S → M**; repo total 13 pts / 14–36 h → **14 pts / 15–38 h**. The escalation *sharpens* rather than
+  closes: `training_metrics.schema.json` is `additionalProperties: false`, so this is a genuine
+  contracts change absent from P1, and S11 is blocked until egm-contracts adds it. Recommended column
+  ordering + the no-`train_reliability` call are recorded in note 5 for the project-lead.
+- **2026-07-28** — **DAT1 scope change (project-lead):** the egm-studio escalation on who joins per-sim
+  config → per-trace θ resolved to **egm-data owns the join** (option a). Verified against the
+  authoritative spec — design §3 DAT1 and `cross_artifact_linkage_design.md` P2's consumer-access
+  bullet, both of which now name this repo, with STU6 explicitly reduced to a small migration as a
+  result. Added **S8** (pure θ resolver) + **S9** (materialization + `ClassifierBank` 0.3); renumbered
+  DAT3 → S10–S11, B16 → S12, docs → S13. **DAT1 rescored L → XL**; repo total 14 pts / 15–38 h →
+  **17 pts / 18.5–46 h**. Two new escalations fall out: the **θ-path root vocabulary** is
+  under-specified (note 8) and the typed bank-level θ-spec forces a **second breaking change in Wave 1**,
+  `ClassifierBank` 0.2 → 0.3, which the design doc doesn't currently name (note 9).
+- **2026-07-28** — **DAT1 corrected — θ comes back off the ClassifierBank** (project-lead, per
+  `investigations/synthetic_bank_source_of_truth.md` §12; supersedes the θ-join note above). The
+  purpose lens — the ClassifierBank is a *source-agnostic ML compression*, so generation params are not
+  its business — flips Escalation-1 to option (b): egm-data exposes the typed `SyntheticBank` (already
+  S5) and egm-studio's T4 views read θ from it; the ClassifierBank carries only signal, label, the
+  `LabelPolicy` identity, and the `simulation_id` join key. Removed S8/S9 (θ resolver +
+  materialization); renumbered back to 11 steps. **DAT1 rescored XL → L**; repo total 17 pts /
+  18.5–46 h → **14 pts / 15–37 h**. **Both escalations from the previous note close:** the
+  `ClassifierBank` 0.2 → 0.3 bump is retired (note 8 — Wave 1 is back to exactly one breaking change),
+  and the θ-path root question is deferred with the join helper (note 9 — now low-priority, not
+  blocking). The correlation join (predictions ⋈ ClassifierBank ⋈ `synthetic_bank`) stays egm-data's to
+  own but is scoped with its view, not in 1.5; S11 logs it to `roadmap.md` and S7 verifies the join key
+  is reachable from a prediction row so it stays possible. Signal duplication across the parallel banks
+  is accepted for 1.5 and tracked platform-side as FB-11 — not an egm-data item.
+- **2026-07-28** — **CL-024 batch adjudication applied.** §2: the T4 bank ⋈ bank join comes into DAT1
+  this phase as **option 1b** (typed `SimulationConfig` per trace, no path grammar, read-time only) →
+  new **S8**; DAT1 **L → XL**, repo 14 pts / 15–37 h → **17 pts / 17–41 h**. *(My CL-010 quoted "16 pts"
+  for 1b — arithmetic slip: 5 → 8 is +3, so the repo total is 17. Hours were right. Flagged to the
+  project-lead in CL-036 in case §6 copied the wrong figure.)* §3: producer renames `sim_id` →
+  `simulation_id`, and egm-data adds a **writer key-name check** (folded into S7) — the only
+  enforcement point, since the ClassifierBank has no JSON Schema (CL-012). §5b: flow-down time counts
+  toward issue `Actual`, recorded in the Effort section. §4 (`T` = 192 ms on the 64-grid) touches no
+  egm-data code. Design note 9's θ-path deferral is now ratified rather than proposed.
+- **2026-07-28** — **CL-022 folded into S9** (egm-classifier): `make_epoch_record` gains
+  `train_metrics=None` **keyword-optional**, so CLF5's Wave-1 migration can write 1.2 records without
+  train metrics — that optionality is what keeps the migration wave separate from the feature wave. A
+  `"reliability"` key inside `train_metrics` is **dropped rather than split out**, deliberately
+  asymmetric with the val path, per P1's FB-10 deferral. Cannot self-resolve CL-022 under the CL-025
+  write rules; replied via CL-036.
+- **2026-07-29** — **CL-037 came back resolved on all four items**, so design notes 1, 2, 3, 5 are now
+  records rather than open questions. The blocking one landed: the `training_metrics` train columns are
+  folded into **P1 + CON3 for v0.6.0** with the **paired** column order and no `train_reliability`, so
+  **S10 is unblocked** and its "may drop out" caveat is gone. §7's target is corrected to **egm-data
+  v0.6.0**; the `SyntheticLabelFn`→override change was routed to egm-classifier + egm-studio as
+  **CL-038**; **P3 was amended** to drop the already-shipped `split`/`prediction` columns.
+- **2026-07-29** — **Effort tracking is not done for Phase 1.5** (Daniel): flow-down tracking,
+  organization, and effort tracking were missed project-wide this phase; the methodology is being
+  designed by Daniel + the project-lead for a later phase and is **not** retrofitted here. No transcript
+  reconstruction, no `Actual`/`Elapsed` at cleanup, no `estimation_ledger.csv` row — estimates only.
+  Supersedes CL-036's `measured=reconstructed` instruction for this repo; posted as CL-043 so the
+  project-lead isn't waiting on a row that will never come.
+- **2026-07-29** — **`roadmap.md` aligned to the phase** (the Planning-gate requirement): the Phase-1.5
+  section now points at this plan rather than duplicating it; the deferred noise-side-calibration entry
+  is renumbered `noise_bank` 1.1 → **1.2** (B20 owns 1.1); and the stale Phase-2 "polymorphic
+  `stimulation` encode/decode" entry is removed, since the 2.0 restructure absorbed it into DAT1. This
+  was previously scheduled for S12 — done now because the gate reads "roadmap updated" at planning.
+- **2026-07-29** — **CL-053 folded into S3** (project-lead, flowing down CL-052): `iafdb_bank` 1.3 gains
+  a per-trace `activation_position` `[0,1]` column, riding B11's already-happening bump. egm-data
+  carries it on read + write only; it **stays on the `IafdbBank` model and must not reach the
+  ClassifierBank** via `iafdb_bank_to_classifier` — same source-agnostic rule that keeps θ off it, and
+  pinned by a negative test since the converter is exactly where it would leak. Field lands Wave 1
+  unpopulated (IAF3); IAF1 fills it Wave 2. **B11 rescored XS → S**; repo total 17 pts / 17–41 h →
+  **18 pts / 17.5–42 h**.
+- **2026-07-29** — **CL-062 folded into DAT1** — the synthetic twin of CL-053. `synthetic_bank` 2.0's
+  `traces/` gains the same optional `activation_position`; S5 reads it, S6 writes it, S7 gets the
+  matching negative test keeping it off the ClassifierBank. **No estimate change:** one optional float
+  column inside steps that are already rewriting the entire `traces/` group is absorbed noise, and DAT1
+  is already XL — inflating it would misreport the driver. CL-062's scope note names only the reader;
+  flagged in CL-063 that the **writer** needs it too, since SEP12 writes through
+  `write_synthetic_bank`.
+- **2026-07-28** — **Noise-mixing provenance stays on the ClassifierBank for 1.5** (Daniel): no further
+  data-structure churn this session. `snr_db` / `noise_record` / `noise_channel` / `seed` are redundant
+  with the `synthetic_bank` (same `simulation_id` join) and are a candidate for removal later, so the
+  optimization is written into `roadmap.md` — which outlives this ephemeral plan — as a sibling of
+  FB-11, alongside the deferred correlation-join entry. S7 keeps today's behavior; nothing to decide.
