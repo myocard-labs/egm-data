@@ -14,6 +14,7 @@ field values.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from myocard_egm_contracts.schema_info import current_version
@@ -31,6 +32,7 @@ from myocard_egm_data.records import (
     ReliabilityBin,
     TrainingMetricsRow,
     TrainingRunRecord,
+    best_epoch,
     build_egm_class_model_metadata,
     build_noise_bank_run_record,
     build_training_run_record,
@@ -88,6 +90,159 @@ def _epoch_records() -> list[EpochRecord]:
 # ---------------------------------------------------------------------------
 # training_run_record
 # ---------------------------------------------------------------------------
+
+
+def test_make_epoch_record_carries_train_metrics(tmp_path: Path) -> None:
+    """train_metrics is split, sanitized, and round-trips (CL-022, P1).
+
+    Without it a validation-only record cannot distinguish an
+    overfitting run from a genuinely hard task, which is the whole point
+    of the 1.2 addition.
+    """
+    er = make_epoch_record(
+        epoch=1,
+        lr=1e-3,
+        train_loss=0.5,
+        val_loss=0.45,
+        epoch_seconds=12.0,
+        val_metrics={"auroc": 0.85, "accuracy": 0.80},
+        train_metrics={"auroc": 0.99, "accuracy": 0.98},
+    )
+    assert er.train_metrics is not None
+    assert er.train_metrics["auroc"] == 0.99
+    # Train metrics must not leak into the val bundle, or divergence
+    # would read as zero.
+    assert er.val_metrics["auroc"] == 0.85
+
+    record = build_training_run_record(
+        config={"model": {"name": "mobilevit_1d"}},
+        run_meta={"run_id": "r1"},
+        epoch_records=[er],
+        select_metric="auroc",
+    )
+    path = tmp_path / "run.json"
+    write_training_run_record(path, record)
+    assert validate_training_run_record(path).ok
+
+    reloaded = load_training_run_record(path)
+    assert reloaded.epochs[0].train_metrics is not None
+    assert reloaded.epochs[0].train_metrics["auroc"] == 0.99
+
+
+def test_epoch_record_without_train_metrics_still_validates(tmp_path: Path) -> None:
+    """Omitting train_metrics is valid — that is what splits the waves.
+
+    The field is optional-in-schema precisely so a producer can adopt
+    the 1.2 record before it emits the field (egm-classifier's CLF5
+    migration lands a wave before CLF2's emit). A record written in
+    between must stay valid, or the two could not ship separately.
+    """
+    er = make_epoch_record(
+        epoch=1,
+        lr=1e-3,
+        train_loss=0.5,
+        val_loss=0.45,
+        epoch_seconds=12.0,
+        val_metrics={"auroc": 0.85},
+    )
+    assert er.train_metrics is None
+
+    record = build_training_run_record(
+        config={}, run_meta={}, epoch_records=[er], select_metric="auroc"
+    )
+    path = tmp_path / "run_no_train.json"
+    write_training_run_record(path, record)
+    assert validate_training_run_record(path).ok
+    # Absent, not null — the schema types it as an object, not nullable.
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert "train_metrics" not in raw["epochs"][0]
+
+
+def test_reliability_inside_train_metrics_is_dropped() -> None:
+    """A 'reliability' key in train_metrics is discarded, not stored.
+
+    Deliberately asymmetric with the val path: train_reliability bins
+    are out of scope for 1.2 (FB-10), so there is nowhere to put them.
+    Dropping beats raising because a producer computing one metrics dict
+    per split will naturally pass reliability on both, and failing would
+    force it to special-case a field it cannot store anyway.
+    """
+    er = make_epoch_record(
+        epoch=1,
+        lr=1e-3,
+        train_loss=0.5,
+        val_loss=0.45,
+        epoch_seconds=12.0,
+        val_metrics={"auroc": 0.85, "reliability": []},
+        train_metrics={
+            "auroc": 0.99,
+            "reliability": [ReliabilityBin(lo=0.0, hi=1.0, count=4, confidence=0.5, accuracy=0.5)],
+        },
+    )
+    assert er.train_metrics is not None
+    assert "reliability" not in er.train_metrics
+    assert er.train_metrics["auroc"] == 0.99
+
+
+def test_best_epoch_ignores_train_metrics() -> None:
+    """Selection stays on val_metrics only.
+
+    If train metrics could influence selection, the selected epoch would
+    be the most overfit one — exactly backwards.
+    """
+    records = [
+        make_epoch_record(
+            epoch=1,
+            lr=1e-3,
+            train_loss=0.5,
+            val_loss=0.45,
+            epoch_seconds=1.0,
+            val_metrics={"auroc": 0.90},
+            train_metrics={"auroc": 0.10},
+        ),
+        make_epoch_record(
+            epoch=2,
+            lr=1e-3,
+            train_loss=0.1,
+            val_loss=0.60,
+            epoch_seconds=1.0,
+            val_metrics={"auroc": 0.70},
+            train_metrics={"auroc": 0.99},
+        ),
+    ]
+    assert best_epoch(records, "auroc").epoch == 1
+
+
+def test_held_out_test_reliability_is_coerced_like_val(tmp_path: Path) -> None:
+    """Test bins accept the same shapes as val bins (B18 parity).
+
+    Before this, val bins went through the coercion path while test bins
+    were passed through raw — so a plain mapping that worked for val
+    failed for test. A producer should be able to hand both splits'
+    metrics in one shape.
+    """
+    record = build_training_run_record(
+        config={},
+        run_meta={},
+        epoch_records=_epoch_records(),
+        select_metric="auroc",
+        test_loss=0.41,
+        test_metrics={
+            "auroc": 0.86,
+            # A plain mapping, not a ReliabilityBin.
+            "reliability": [
+                {"lo": 0.0, "hi": 1.0, "count": 20, "confidence": 0.5, "accuracy": 0.55}
+            ],
+        },
+    )
+    assert record.test is not None
+    assert record.test.reliability is not None
+    assert isinstance(record.test.reliability[0], ReliabilityBin)
+    assert record.test.reliability[0].count == 20
+
+    path = tmp_path / "run_with_test.json"
+    write_training_run_record(path, record)
+    assert validate_training_run_record(path).ok
 
 
 def test_training_run_record_round_trips(tmp_path: Path) -> None:
@@ -194,6 +349,89 @@ def test_training_metrics_round_trips(tmp_path: Path) -> None:
     assert rows[0].epoch == 1
     assert rows[0].val_auroc == 0.85
     assert rows[1].val_auroc == 0.87
+
+
+def test_training_metrics_carries_train_columns(tmp_path: Path) -> None:
+    """The six train_* columns are written and read back (P1, CL-037).
+
+    metrics.csv is the file a human opens; the run.json carries the same
+    numbers but nobody scans JSON for a divergence trend.
+    """
+    records = [
+        make_epoch_record(
+            epoch=1,
+            lr=1e-3,
+            train_loss=0.5,
+            val_loss=0.45,
+            epoch_seconds=12.0,
+            val_metrics={"auroc": 0.85, "accuracy": 0.80, "f1": 0.79, "ece": 0.05},
+            train_metrics={"auroc": 0.99, "accuracy": 0.97, "f1": 0.98, "ece": 0.01},
+        )
+    ]
+    path = tmp_path / "metrics.csv"
+    write_training_metrics(path, records)
+    assert validate_training_metrics(path).ok
+
+    rows = load_training_metrics(path)
+    assert rows[0].train_auroc == 0.99
+    assert rows[0].val_auroc == 0.85
+    # A metric absent from both dicts stays empty rather than defaulting.
+    assert rows[0].train_precision is None
+    assert rows[0].val_precision is None
+
+
+def test_training_metrics_column_order_pairs_the_splits(tmp_path: Path) -> None:
+    """The header pairs train_* with val_* rather than appending train.
+
+    The whole reason for carrying both splits is reading their
+    divergence, and that only reads clearly when the pairs are adjacent
+    — appending the train block at the end puts eight columns between
+    train_auroc and val_auroc in a spreadsheet. Asserting on the raw
+    header, since the typed model cannot express order.
+    """
+    path = tmp_path / "metrics.csv"
+    write_training_metrics(path, _epoch_records())
+
+    header = path.read_text(encoding="utf-8").splitlines()[0].split(",")
+    assert header[:4] == ["epoch", "lr", "train_loss", "train_auroc"]
+    assert header[-1] == "epoch_seconds"
+    # Every train_* column precedes every val_* column's twin, in the
+    # same relative order.
+    train_cols = [
+        c[len("train_") :] for c in header if c.startswith("train_") and c != "train_loss"
+    ]
+    val_cols = [c[len("val_") :] for c in header if c.startswith("val_") and c != "val_loss"]
+    assert train_cols == val_cols
+
+
+def test_training_metrics_without_train_metrics_writes_empty_cells(tmp_path: Path) -> None:
+    """A record with no train_metrics yields empty cells, not missing columns.
+
+    This is the CLF5-migration shape: the 1.2 record is adopted a wave
+    before the emit. The header has to stay stable across that gap or a
+    consumer plotting the file would see the schema change mid-phase.
+    """
+    records = [
+        make_epoch_record(
+            epoch=1,
+            lr=1e-3,
+            train_loss=0.5,
+            val_loss=0.45,
+            epoch_seconds=12.0,
+            val_metrics={"auroc": 0.85},
+        )
+    ]
+    path = tmp_path / "metrics_no_train.csv"
+    write_training_metrics(path, records)
+    assert validate_training_metrics(path).ok
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert "train_auroc" in lines[0].split(",")
+    rows = load_training_metrics(path)
+    assert rows[0].train_auroc is None
+    assert rows[0].val_auroc == 0.85
+    # train_loss is a separate, always-required column and is unaffected.
+    assert rows[0].train_loss == 0.5
 
 
 def test_training_metrics_null_round_trip(tmp_path: Path) -> None:

@@ -49,6 +49,17 @@ from .converters import (
     load_synthetic_bank_as_classifier,
     synthetic_bank_to_classifier,
 )
+from .id_consistency import (
+    check_classifier_bank_id_matches_content,
+    check_noise_bank_id_agreement,
+    check_noise_bank_pair,
+)
+from .joins import (
+    SimulationConfig,
+    TraceWithSimulation,
+    join_traces_with_simulations,
+    simulation_configs,
+)
 from .noise_bank import read_noise_bank_hdf5, write_noise_bank
 from .readers import read_iafdb_bank_hdf5, read_synthetic_bank_hdf5
 from .writers import (
@@ -64,14 +75,21 @@ __all__ = [
     "ClassifierTrace",
     "IAFDBLabelFn",
     "LabelResult",
+    "SimulationConfig",
     "SyntheticLabelFn",
+    "TraceWithSimulation",
+    "check_classifier_bank_id_matches_content",
+    "check_noise_bank_id_agreement",
+    "check_noise_bank_pair",
     "iafdb_bank_to_classifier",
+    "join_traces_with_simulations",
     "load_classifier_bank",
     "load_iafdb_bank_as_classifier",
     "load_synthetic_bank_as_classifier",
     "read_iafdb_bank_hdf5",
     "read_noise_bank_hdf5",
     "read_synthetic_bank_hdf5",
+    "simulation_configs",
     "synthetic_bank_to_classifier",
     "write_classifier_bank",
     "write_iafdb_bank",

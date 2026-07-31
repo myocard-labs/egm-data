@@ -38,7 +38,30 @@ __all__ = [
 ]
 
 BANK_TRACES_GROUP = "traces"
+BANK_SIMULATIONS_GROUP = "simulations"
 SIGNAL_DATASET = "signal"
+
+#: Per-simulation config columns stored as JSON strings in ``simulations/``.
+#: HDF5 has no nested-record type worth using and these objects are
+#: polymorphic (a ``substrate`` may be uniform-random today and patchy
+#: tomorrow), so each row is a JSON document under a ``_json``-suffixed
+#: dataset. The schema describes the *decoded* form under the unsuffixed
+#: name — the same convention the contracts validator's
+#: ``_hdf5.read_json_columns`` implements on its side.
+SIMULATION_JSON_COLUMNS = (
+    "geometry",
+    "cell_model",
+    "substrate",
+    "substrate_summary",
+    "activation",
+    "electrodes",
+    "backend",
+    "label_policy",
+    "label_names",
+)
+
+#: Plain integer columns in ``simulations/``.
+SIMULATION_INT_COLUMNS = ("simulation_id", "seed")
 
 
 # ---------------------------------------------------------------------------
@@ -51,20 +74,30 @@ def read_synthetic_bank_hdf5(
 ) -> _synthetic_bank_models.SyntheticBank:
     """Read a synthetic-bank HDF5 file into a Pydantic SyntheticBank.
 
-    The four JSON-encoded sub-config root attrs
-    (``fibrosis_params_json`` etc.) are decoded back to dicts and
-    rewritten under the schema-side field names (``fibrosis_params``
-    etc.) before constructing the model.
+    Reads the schema-2.0 layout: bank-scoped root attrs (including the
+    JSON-encoded ``generation_params_json`` θ-spec), a ``simulations/``
+    group holding one typed, polymorphic config object per simulation,
+    and a collapsed ``traces/`` group of signal + two foreign keys +
+    label + noise provenance.
+
+    **No 1.1 compatibility.** A pre-2.0 bank is refused by the version
+    check rather than partially read: the generation parameters it
+    carries live in columns that no longer exist, so a "best effort"
+    read would silently drop the very provenance the bank exists to
+    record. Regenerate instead — nothing released depends on a 1.1 bank
+    (egm-contracts v0.6.0 CHANGELOG).
     """
     path = Path(path)
     if not path.is_file():
         raise FileNotFoundError(f"Bank file not found: {path}")
     with h5py.File(path, "r") as f:
         _check_version(f, path, "synthetic_bank")
-        if BANK_TRACES_GROUP not in f:
-            raise ValueError(f"Bank {path} has no '{BANK_TRACES_GROUP}' group.")
+        for group in (BANK_SIMULATIONS_GROUP, BANK_TRACES_GROUP):
+            if group not in f:
+                raise ValueError(f"Bank {path} has no '{group}' group.")
 
-        # Bank-level root attrs.
+        # Bank-level root attrs. generation_params is the sweep-scoped
+        # θ-spec, JSON-encoded because it is a nested object.
         doc: dict[str, Any] = {
             "schema_version": _str_attr(f, "schema_version", required=True, path=path),
             "created_utc": _str_attr(f, "created_utc", required=True, path=path),
@@ -72,46 +105,76 @@ def read_synthetic_bank_hdf5(
             "description": _str_attr(f, "description", required=False, path=path, default=""),
             "fs_hz": _float_attr(f, "fs_hz", required=True, path=path),
             "trace_duration_ms": _float_attr(f, "trace_duration_ms", required=True, path=path),
-            "simulator": _str_attr(f, "simulator", required=True, path=path),
-            "cell_model": _str_attr(f, "cell_model", required=True, path=path),
-            "patch_size_mm": _float_attr(f, "patch_size_mm", required=True, path=path),
-            "patch_dr_mm": _float_attr(f, "patch_dr_mm", required=True, path=path),
-            "ap_time_unit_ms": _float_attr(f, "ap_time_unit_ms", required=True, path=path),
-            "fibrosis_strategy_name": _str_attr(
-                f, "fibrosis_strategy_name", required=True, path=path
-            ),
-            "fibrosis_params": _json_attr(f, "fibrosis_params_json"),
-            "electrode_config": _json_attr(f, "electrode_config_json"),
-            "mixer_config": _json_attr(f, "mixer_config_json"),
-            "experiment_config": _json_attr(f, "experiment_config_json"),
             "noise_bank_source": _str_attr(
                 f, "noise_bank_source", required=False, path=path, default=""
             ),
+            "generation_params": _json_attr(f, "generation_params_json"),
         }
 
-        # Per-trace columns.
-        g = f[BANK_TRACES_GROUP]
-        if SIGNAL_DATASET not in g:
-            raise ValueError(f"Bank {path} missing '{BANK_TRACES_GROUP}/{SIGNAL_DATASET}'.")
-
-        signal = np.asarray(g[SIGNAL_DATASET][...], dtype=np.float32)
-        # Pydantic codegen emits list[list[float]] for the signal field.
-        doc["traces"] = {
-            "signal": signal.tolist(),
-            "simulation_id": [int(x) for x in g["simulation_id"][...]],
-            "pair_index": [int(x) for x in g["pair_index"][...]],
-            "electrode_row": [int(x) for x in g["electrode_row"][...]],
-            "fibrosis_density": [float(x) for x in g["fibrosis_density"][...]],
-            "fibrosis_density_realized": [float(x) for x in g["fibrosis_density_realized"][...]],
-            "electrode_height_mm": [float(x) for x in g["electrode_height_mm"][...]],
-            "seed": [int(x) for x in g["seed"][...]],
-            "snr_db": [float(x) for x in g["snr_db"][...]],
-            "stim_edge": [_decode(x) for x in g["stim_edge"][...]],
-            "noise_record": [_decode(x) for x in g["noise_record"][...]],
-            "noise_channel": [_decode(x) for x in g["noise_channel"][...]],
-        }
+        doc["simulations"] = _read_simulations_group(f[BANK_SIMULATIONS_GROUP], path=path)
+        doc["traces"] = _read_synthetic_traces_group(f[BANK_TRACES_GROUP], path=path)
 
     return _synthetic_bank_models.SyntheticBank.model_validate(doc)
+
+
+def _read_simulations_group(g: h5py.Group, *, path: Path) -> dict[str, Any]:
+    """Decode the ``simulations/`` group into schema shape.
+
+    Each ``<name>_json`` dataset holds one JSON document per simulation;
+    they are decoded and re-keyed to the unsuffixed name the schema
+    describes. A row that fails to parse is deliberately **not** left as
+    a raw string here (unlike the contracts validator, which does that so
+    it can report a useful schema error): this reader's caller gets a
+    Pydantic model or an exception, so a malformed row must fail loudly
+    with the column and row that caused it.
+    """
+    out: dict[str, Any] = {}
+    for name in SIMULATION_INT_COLUMNS:
+        if name not in g:
+            raise ValueError(f"Bank {path} missing '{BANK_SIMULATIONS_GROUP}/{name}'.")
+        out[name] = [int(x) for x in g[name][...]]
+
+    for name in SIMULATION_JSON_COLUMNS:
+        dataset = f"{name}_json"
+        if dataset not in g:
+            raise ValueError(f"Bank {path} missing '{BANK_SIMULATIONS_GROUP}/{dataset}'.")
+        decoded: list[Any] = []
+        for row, raw in enumerate(g[dataset][...]):
+            text = _decode(raw)
+            try:
+                decoded.append(json.loads(text))
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Bank {path}: '{BANK_SIMULATIONS_GROUP}/{dataset}' row {row} is not "
+                    f"valid JSON ({exc}). Each row holds one typed config object."
+                ) from exc
+        out[name] = decoded
+    return out
+
+
+def _read_synthetic_traces_group(g: h5py.Group, *, path: Path) -> dict[str, Any]:
+    """Decode the collapsed 2.0 ``traces/`` group into schema shape."""
+    if SIGNAL_DATASET not in g:
+        raise ValueError(f"Bank {path} missing '{BANK_TRACES_GROUP}/{SIGNAL_DATASET}'.")
+
+    signal = np.asarray(g[SIGNAL_DATASET][...], dtype=np.float32)
+    # Pydantic codegen emits list[list[float]] for the signal field.
+    traces: dict[str, Any] = {
+        "signal": signal.tolist(),
+        "simulation_id": [int(x) for x in g["simulation_id"][...]],
+        "pair_index": [int(x) for x in g["pair_index"][...]],
+        "label": [int(x) for x in g["label"][...]],
+        "snr_db": [float(x) for x in g["snr_db"][...]],
+        "noise_record": [_decode(x) for x in g["noise_record"][...]],
+        "noise_channel": [_decode(x) for x in g["noise_channel"][...]],
+    }
+    # Optional and permanently so — present only once SEP2 anchors the
+    # crop. Left unset rather than zero-filled: absence means "unknown
+    # position", while a zero would read as "activation at the very
+    # start of the trace". Mirrors the iafdb_bank column exactly.
+    if "activation_position" in g:
+        traces["activation_position"] = [float(x) for x in g["activation_position"][...]]
+    return traces
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +201,8 @@ def read_iafdb_bank_hdf5(path: Path | str) -> _iafdb_bank_models.IafdbBank:
             "schema_version": _str_attr(f, "schema_version", required=True, path=path),
             "created_utc": _str_attr(f, "created_utc", required=True, path=path),
             "bank_id": _opt_str_attr(f, "bank_id"),
+            # iafdb_bank 1.3 (B11): absence means "no sidecar", not an error.
+            "run_record_path": _opt_str_attr(f, "run_record_path"),
             "source": _str_attr(f, "source", required=True, path=path),
             "fs_hz": _float_attr(f, "fs_hz", required=True, path=path),
             "trace_duration_ms": _float_attr(f, "trace_duration_ms", required=True, path=path),
@@ -168,6 +233,13 @@ def read_iafdb_bank_hdf5(path: Path | str) -> _iafdb_bank_models.IafdbBank:
             "peak_to_peak_mv": [float(x) for x in g["peak_to_peak_mv"][...]],
             "calibration_scalar": [float(x) for x in g["calibration_scalar"][...]],
         }
+        # iafdb_bank 1.3: optional and permanently so — present only on
+        # activation-split banks. Left unset (not zero-filled) when absent,
+        # because the schema requires readers to treat absence as "unknown
+        # position"; a zeroed column would read as "every activation sits at
+        # the very start of its window".
+        if "activation_position" in g:
+            doc["traces"]["activation_position"] = [float(x) for x in g["activation_position"][...]]
 
     return _iafdb_bank_models.IafdbBank.model_validate(doc)
 

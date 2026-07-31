@@ -9,6 +9,12 @@ Non-finite floats (e.g. AUROC undefined on a single-class val split)
 are written as empty CSV cells and round-trip back to ``None`` on
 read, which is distinct from "this metric was zero".
 
+The order is taken from the schema rather than hardcoded here, which is
+why the v0.6.0 addition of the six ``train_*`` columns needed no change
+to the writer's serialization or the reader's coercion — both are
+driven by ``csv_column_order("training_metrics")``. Only the projection
+from :class:`EpochRecord` had to learn about the new columns.
+
 Unlike the JSON records, ``metrics.csv`` has no per-document
 ``schema_version`` field — the schema describes a row, not a file —
 so this module has no ``build_*`` helper. Producers build
@@ -46,8 +52,15 @@ def write_training_metrics(path: Path | str, epoch_records: Sequence[EpochRecord
 
     Projects each :class:`EpochRecord` down to the
     :class:`TrainingMetricsRow` shape (the well-known scalar keys from
-    ``val_metrics``), serializes via the schema's declared column
-    order, and writes empty cells for non-finite or absent values.
+    ``train_metrics`` and ``val_metrics``), serializes via the schema's
+    declared column order, and writes empty cells for non-finite or
+    absent values.
+
+    Since ``egm-contracts`` v0.6.0 the column order **pairs** the two
+    splits — ``train_loss, train_*, val_loss, val_*`` — rather than
+    appending the train block at the end. Reading train-vs-val
+    divergence is the reason both are carried, and that only reads
+    clearly when the pairs sit next to each other.
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -84,20 +97,45 @@ def load_training_metrics(path: Path | str) -> list[TrainingMetricsRow]:
 # ---------------------------------------------------------------------------
 
 
+#: The scalar metrics the CSV carries per split, in schema order. Both
+#: splits take exactly this set — the point of carrying train and val
+#: side by side is reading their divergence, which only works if the
+#: two are projected identically.
+_SPLIT_METRIC_KEYS = ("auroc", "accuracy", "precision", "recall", "f1", "ece")
+
+
+def _split_metrics(metrics: Any, prefix: str) -> dict[str, Any]:
+    """Project one split's metrics dict onto its ``<prefix>_*`` CSV columns.
+
+    Returns every column, with ``None`` for metrics the split doesn't
+    carry — including when ``metrics`` is ``None`` entirely, which is
+    the pre-CLF2 case where a record has no train metrics at all. That
+    yields empty cells rather than absent columns, so the header stays
+    stable across runs and a spreadsheet or plotting library reading the
+    file doesn't have to cope with a varying schema.
+    """
+    source = metrics or {}
+    return {f"{prefix}_{key}": _sanitize_floats(source.get(key)) for key in _SPLIT_METRIC_KEYS}
+
+
 def _epoch_to_row(r: EpochRecord) -> TrainingMetricsRow:
     """Project an :class:`EpochRecord` to a :class:`TrainingMetricsRow`.
 
-    Pulls the well-known scalar keys from ``val_metrics`` by name;
-    anything else in ``val_metrics`` is dropped here because the CSV
-    columns are fixed by the schema (extra keys live in
-    :class:`TrainingRunRecord` instead, which carries the full
-    ``val_metrics`` dict per epoch).
+    Pulls the well-known scalar keys from ``train_metrics`` and
+    ``val_metrics`` by name; anything else in either dict is dropped
+    here because the CSV columns are fixed by the schema (extra keys
+    live in :class:`TrainingRunRecord` instead, which carries the full
+    per-epoch dicts).
 
     Non-finite floats (e.g. NaN AUROC on a single-class val split) are
     sanitized to ``None`` before constructing the
-    :class:`TrainingMetricsRow` — the schema constrains the val_*
-    fields to ``[0, 1]`` and nullable, so NaN must round-trip through
-    ``None`` rather than be rejected at validation time.
+    :class:`TrainingMetricsRow` — the schema constrains these fields to
+    ``[0, 1]`` and nullable, so NaN must round-trip through ``None``
+    rather than be rejected at validation time.
+
+    A record with no ``train_metrics`` at all (valid: the field is
+    optional-in-schema so the 1.2 migration can land before the emit)
+    produces empty ``train_*`` cells, not missing columns.
     """
     # The training_metrics schema requires train_loss and val_loss to
     # be present and finite — "if a producer writes them as null/empty,
@@ -110,18 +148,13 @@ def _epoch_to_row(r: EpochRecord) -> TrainingMetricsRow:
             f"EpochRecord(epoch={r.epoch}) has null train_loss / val_loss; "
             "training_metrics.csv requires both to be finite."
         )
-    m = r.val_metrics
     return TrainingMetricsRow(
         epoch=r.epoch,
         lr=r.lr,
         train_loss=r.train_loss,
         val_loss=r.val_loss,
-        val_auroc=_sanitize_floats(m.get("auroc")),
-        val_accuracy=_sanitize_floats(m.get("accuracy")),
-        val_precision=_sanitize_floats(m.get("precision")),
-        val_recall=_sanitize_floats(m.get("recall")),
-        val_f1=_sanitize_floats(m.get("f1")),
-        val_ece=_sanitize_floats(m.get("ece")),
+        **_split_metrics(r.train_metrics, "train"),
+        **_split_metrics(r.val_metrics, "val"),
         epoch_seconds=r.epoch_seconds,
     )
 

@@ -59,8 +59,9 @@ def make_epoch_record(
     val_loss: float | None,
     epoch_seconds: float,
     val_metrics: Mapping[str, Any],
+    train_metrics: Mapping[str, Any] | None = None,
 ) -> EpochRecord:
-    """Smart constructor for one :class:`EpochRecord` from a flat val_metrics dict.
+    """Smart constructor for one :class:`EpochRecord` from flat metrics dicts.
 
     The trainer's :func:`binary_metrics`-style output mixes scalar
     metrics (``auroc``, ``accuracy``, ``f1``, ``ece``, etc.) and a
@@ -93,16 +94,40 @@ def make_epoch_record(
         contains a ``"reliability"`` key, the value is extracted into
         :attr:`EpochRecord.val_reliability`; every other key/value
         pair becomes part of :attr:`EpochRecord.val_metrics`.
+    train_metrics
+        Optional. The same flat dict computed on the **training**
+        split (``training_run_record`` 1.2). Omit it and the field is
+        left unset — which is deliberate, not an oversight: it lets a
+        producer adopt the 1.2 schema *before* it emits train metrics,
+        so a schema migration and a feature can ship in separate waves
+        and every record written in between stays valid.
+
+        Asymmetric with ``val_metrics`` in one respect: a
+        ``"reliability"`` key here is **dropped rather than split into
+        a second field**, because ``train_reliability`` bins are out of
+        scope for 1.2 (deferred as FB-10). Dropping silently is the
+        right call over raising — a producer that computes one metrics
+        dict per split will naturally pass reliability on both, and
+        failing on that would force it to special-case a field it has
+        no way to store.
     """
     reliability_raw = val_metrics.get("reliability", [])
     bins = [_coerce_reliability_bin(b) for b in reliability_raw]
     scalar = {k: v for k, v in val_metrics.items() if k != "reliability"}
+
+    train_scalar: dict[str, Any] | None = None
+    if train_metrics is not None:
+        train_scalar = _sanitize_floats(
+            {k: v for k, v in train_metrics.items() if k != "reliability"}
+        )
+
     return EpochRecord(
         epoch=epoch,
         lr=lr,
         train_loss=_sanitize_floats(train_loss),
         val_loss=_sanitize_floats(val_loss),
         epoch_seconds=epoch_seconds,
+        train_metrics=train_scalar,
         val_metrics=_sanitize_floats(scalar),
         val_reliability=bins,
     )
@@ -155,11 +180,19 @@ def build_training_run_record(
     config
         The fully-resolved training configuration — typically nested
         ``model`` / ``data`` / ``training`` / ``eval`` blocks. Stored
-        verbatim under ``TrainingRunRecord.config``.
+        verbatim under ``TrainingRunRecord.config``. **Artifact paths in
+        here should be repo-relative, not absolute** (B14): an absolute
+        path records the machine that trained rather than the artifact
+        that was used, and breaks the moment the record is read anywhere
+        else. Convention only — the schema stores whatever it is given.
     run_meta
-        Run-level metadata: ``run_id``, ``git_sha``, ``host``,
-        ``model_version``, ``training_started_utc`` /
-        ``training_ended_utc``. Stored under ``TrainingRunRecord.run``.
+        Run-level metadata: ``run_id``, ``git_sha``, ``model_version``,
+        ``training_started_utc`` / ``training_ended_utc``. Stored under
+        ``TrainingRunRecord.run``. **``host`` is no longer a well-known
+        key** (B15) — it identified the machine, which nothing
+        downstream ever read, and is bulk in every record. The object
+        still allows additional keys, so a producer that wants it is not
+        blocked; it is simply not part of the documented set.
     epoch_records
         Per-epoch :class:`EpochRecord` instances, in epoch order.
     select_metric
@@ -170,7 +203,14 @@ def build_training_run_record(
         Held-out test results (only present when a test split was
         evaluated). When supplied, the reliability bins inside
         ``test_metrics`` are split out of the scalar dict and placed
-        into the dedicated ``HeldOutTest.reliability`` slot.
+        into the dedicated ``HeldOutTest.reliability`` slot, **coerced
+        through the same path as the val bins** (B18) — so a producer
+        can hand test and val metrics in identical shapes and get
+        identical treatment. Before 1.2 the test bins were passed
+        through raw, which meant a dataclass or namedtuple that worked
+        for val failed for test.
+        **Producer semantic:** these are the metrics of the epoch named
+        in ``best``, not of the last epoch.
     run_id, trained_on_bank_id, produced_model_id
         Optional stable cross-artifact ids (egm-contracts v0.5.0): this
         run's own ``run_id``, plus relationship pointers to the training
@@ -187,7 +227,11 @@ def build_training_run_record(
         test_block = HeldOutTest(
             loss=_sanitize_floats(test_loss),
             metrics=_sanitize_floats(scalar),
-            reliability=list(test_metrics.get("reliability", [])),
+            # Same coercion as the val bins (B18): accept a typed
+            # ReliabilityBin, a mapping, or any object with the five
+            # attributes, rather than requiring the caller to pre-shape
+            # the test bins differently from the val ones.
+            reliability=[_coerce_reliability_bin(b) for b in test_metrics.get("reliability", [])],
         )
     return TrainingRunRecord(
         schema_version=TrainingRunRecordSchemaVersion(current_version("training_run_record")),
