@@ -2,8 +2,10 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 11/12 steps done (S1–S11 ✅) — all code complete; **97 passed,
-ruff + mypy clean**. Remaining: S12 (docs / CHANGELOG / roadmap / v0.6.0 bump / pre-PR run).
+**Status:** ready for PR · **Progress:** 12/12 steps done (S1–S12 ✅) — **98 passed, ruff + mypy clean,
+version 0.6.0, pinned to egm-contracts v0.6.0.** The full pre-PR checklist passes. Next: PR
+`development → release` (Daniel, GitHub web UI), then tag `v0.6.0` — which unblocks the four Wave-1
+adoptions (SEP12 · STU6 · IAF3 · CLF5).
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -506,7 +508,7 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   failed write leaves no file behind — so the producer learns while it can still fix it, and the bad
   artifact never reaches a phase manifest where other artifacts start pointing at it.
 
-### S12 — Docs + phase-exit ☐ (1–3 h)
+### S12 — Docs + phase-exit ✅
 - **Change:** `docs/usage.md` (the 2.0 bank example, the converter's new label behavior, the fact that
   θ is read from the typed `SyntheticBank` and **not** from a ClassifierBank, the dropped `host` key),
   `project/classifier_bank_format.md` if S10 touches the format, `CHANGELOG.md` `[Unreleased]` → the
@@ -516,9 +518,27 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   now-shipped Phase-1.5 pointer block (the roadmap was aligned at planning on 2026-07-29 — the
   renumbering, the Phase-2 removal, and the deferred correlation-join + noise-provenance entries are
   already in). Version bump to **v0.6.0** per design note 1.
-- **Verify:** the full pre-PR run in `intracardiac-platform/project/pr_checklist.md` — `ruff format src
-  tests` **and** `ruff check`, `mypy`, `pytest`, docs sync, CHANGELOG.
+- **Verify:** ✅ full pre-PR run green — `ruff format src tests` (no changes), `ruff check` clean,
+  `ruff format --check` clean, `mypy src` clean, **98 passed**. Version bumped to **0.6.0**, pin at
+  `egm-contracts@v0.6.0`, CHANGELOG 0.6.0 entry written, roadmap trimmed to future-only, plan statuses
+  current.
 - **Depends on:** all prior steps.
+- **Docs rewritten, not patched.** `docs/usage.md`'s opening example still taught the 1.1 idiom —
+  deriving labels from `traces.fibrosis_density` via a `label_fn`. Both the column and the idiom are
+  gone, so the example was rewritten around the bank's own labels, with the *inversion* called out
+  explicitly (omitting `label_fn` used to mean "unlabeled", now means "use the bank's labels"), plus a
+  new section on reading θ from the typed `SyntheticBank` and joining the two banks.
+  `classifier_bank_format.md` gained the join-key convention, the role↔content table, and a "what is
+  deliberately not here" note on generation parameters.
+- **Repo-hygiene find: `.gitignore` had the unanchored-`data/` landmine.** The checklist's guard box
+  caught it — `data/` matched at any depth, so `git check-ignore` confirmed it *would* silently swallow
+  a `src/myocard_egm_data/data/` package. Nothing is broken today (that package moved to egm-classifier
+  at Step 8), but this is the exact trap that gave egm-classifier a red CI at Step 8: green locally,
+  `ModuleNotFoundError` in CI. Root-anchored the seven output dirs (`/data/`, `/checkpoints/`, …) and
+  verified both directions — a source package is no longer ignored, a top-level `data/` still is.
+  **Fleet finding:** 6 of the other 8 repos still carry the unanchored line, **including
+  `python-template`**, so every repo spawned from it inherits the landmine. Raised as **CL-097**; not
+  mine to fix in other repos.
 
 **Parallelism:** S2–S4 are mutually independent. The DAT1 chain is S5→S6→S7→S8 (S8 also needs S5's
 typed reader). S9→S10 is a second chain that runs alongside it, and S11 is independent of everything.

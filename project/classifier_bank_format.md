@@ -75,9 +75,42 @@ The dict is generic but consumers rely on a few well-known keys:
 - `patient_id: str` — required for the patient-aware splitter. Every
   converter sets it (synthetic stringifies `simulation_id`; IAFDB
   passes through the IAFDB patient id).
-- Other source-specific keys are passed through verbatim from the
-  source bank (`fibrosis_density`, `peak_to_peak_mv`, etc.) so analysis
+- `simulation_id: int` (+ `pair_index: int`) — the **join key** back to
+  the `synthetic_bank` that generated the trace, on synthetic-sourced
+  banks only. The name is enforced on write: a bank spelling it `sim_id`
+  is refused, because one artifact type with two names for its join key
+  passes every unit test and then fails once, on real artifacts, at join
+  time.
+- Other source-specific keys are passed through verbatim from the source
+  bank (`peak_to_peak_mv`, the noise-mixing provenance, etc.) so analysis
   code can pull them when it wants.
+
+**What is deliberately *not* here: generation parameters.** Since
+`synthetic_bank` 2.0 the ClassifierBank is a source-agnostic ML
+compression, so θ and the per-simulation config stay on the
+`synthetic_bank` and are reached through `simulation_id` rather than
+copied per trace. The two banks are parallel artifacts sharing a key.
+Rationale:
+`intracardiac-platform/project/investigations/synthetic_bank_source_of_truth.md`
+§12; the join helper is `banks.join_traces_with_simulations`.
+
+### The stable `id` makes a checkable claim
+
+`ClassifierBank.id` is optional — an untracked intermediate bank has
+none — but when present its role prefix must match the content, and the
+writer enforces that:
+
+| role | labels | predictions |
+|---|---|---|
+| `tbank_` training | present | absent |
+| `lpred_` labeled prediction | present | present |
+| `ptbank_` pretraining | absent | absent |
+| `upred_` unlabeled prediction | absent | present |
+
+egm-contracts validates the id's *shape* (the prefix is a known role);
+JSON Schema cannot check whether the artifact actually is what the
+prefix claims, which is why this lives here. An evaluated training bank
+is an `lpred_`, not a `tbank_` that happens to carry predictions.
 
 ## On-disk layout (HDF5)
 

@@ -14,19 +14,15 @@ Work lands here as it's identified, sits in the **Backlog** until a phase-planni
 promotes it, then moves to the CHANGELOG once shipped. Items scheduled into cross-cutting Phase
 work carry a `→ tracked at intracardiac-platform Phase X` annotation.
 
-## Phase 1.5 — sim-realism (scheduled — see the phase plan)
+## Phase 1.5 — sim-realism
 
-**In flight.** egm-data's Phase-1.5 slice is scoped and stepped in
-[`phase_1_5_plan.md`](phase_1_5_plan.md), not here: the `synthetic_bank` **2.0** I/O + θ-free
-ClassifierBank conversion + the bank ⋈ bank T4 join (**DAT1**), `training_run_record` 1.2 and the
-`training_metrics` CSV train columns (**DAT3**), and the backlog-driven schema halves **B11 · B14 ·
-B15 · B16 · B18 · B19 · B20**. All ship in one coordinated PR at **v0.6.0**, re-pinned to
-egm-contracts v0.6.0. Those items are removed from this roadmap when the plan lands in the
-CHANGELOG; only the entries below stay future-only.
+Shipped in **v0.6.0** — see the CHANGELOG. DAT1 (`synthetic_bank` 2.0 I/O, the θ-free ClassifierBank
+conversion, the bank ⋈ bank join), DAT3 (`training_run_record` 1.2 + the `training_metrics` train
+columns), and the backlog schema halves B11 / B14 / B15 / B16 / B18 / B19 / B20 are all done and
+removed from this roadmap. The **polymorphic `stimulation` encode/decode** item that used to sit
+under Phase 2 shipped with them, absorbed into the `activation` facet of the per-simulation config.
 
-The **polymorphic `stimulation` encode/decode** item that sat under Phase 2 was pulled forward into
-1.5 and absorbed by the `synthetic_bank` 2.0 restructure — it is now the `activation` facet of the
-per-simulation config, covered by DAT1. Removed from Phase 2 accordingly.
+Only the deferred entry below remains from this phase.
 
 ### `noise_bank` 1.2 + `noise_bank_run_record` 1.2 — noise-side calibration fields
 
@@ -138,28 +134,6 @@ generically — paths resolve against three different roots (per-sim config, per
 per-pair `electrodes.pairs.*`).
 
 > → Build when the FN-vs-θ view is scoped as an egm-studio issue.
-
-### Stamp the noise bank's `bank_id` into the `.h5`
-
-Today a noise bank's stable id rides only on its sibling `<stem>_run_record.json`; egm-studio's
-Noise view has to read the id from that sidecar because the `.h5` carries none. Once egm-contracts
-adds a `bank_id` (+ a link to the run record) to the `noise_bank` HDF5 attrs, egm-data stamps it
-on write and surfaces it on read, and the sibling-record lookup can retire. Cross-repo with
-iafdb-pipeline (the producer) + egm-studio (drops the lookup). Surfaced by the egm-studio B10g
-review.
-
-> → **Scheduled into Phase 1.5 as B20** (`noise_bank` 1.1); stepped as S2 in
-> [`phase_1_5_plan.md`](phase_1_5_plan.md). Removed from this roadmap when it lands in the CHANGELOG.
-
-### Tolerate optional `produced_by_package` / `produced_by_version`
-
-egm-studio indexes manually-added producer artifacts with sentinel provenance
-(`produced_by_package="unknown"`, `version="0"`) because the manifest-entry fields are required.
-When egm-contracts makes them optional, egm-data's manifest reader/writer should round-trip their
-absence cleanly. Cross-repo.
-
-> → **Scheduled into Phase 1.5 as B19** (`phase_manifest`); stepped as S4 in
-> [`phase_1_5_plan.md`](phase_1_5_plan.md). Removed from this roadmap when it lands in the CHANGELOG.
 
 ## Won't-do (out of scope, but documented to save the question)
 

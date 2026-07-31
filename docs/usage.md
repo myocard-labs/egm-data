@@ -26,36 +26,42 @@ egm-data is a pure I/O package — it does not depend on torch.
 ### Load a source bank as a ClassifierBank
 
 The most common entry point. Open a synthetic-bank HDF5 file produced
-by the synthetic-EGM pipeline, apply a labeling policy, and get back a
-labeled `ClassifierBank`:
+by the synthetic-EGM pipeline and get back a labeled `ClassifierBank`:
 
 ```python
-import numpy as np
 from myocard_egm_data.banks import load_synthetic_bank_as_classifier
 
-def label_fn(bank):
-    # The Pydantic SyntheticBank exposes per-trace columns.
-    labels = (np.asarray(bank.traces.fibrosis_density) > 0.0).astype(np.int64)
-    return labels, {0: "healthy", 1: "fibrotic"}
-
-cb = load_synthetic_bank_as_classifier(
-    "data/hybrid_v1.h5",
-    label_fn=label_fn,
-)
+cb = load_synthetic_bank_as_classifier("data/synthetic_v1_5.h5")
 print(cb.n_traces, cb.labels)  # 2000 {0: 'healthy', 1: 'fibrotic'}
 ```
 
-The labeling policy is *your* choice — the library does not pre-decide
-what counts as "fibrotic". If you omit `label_fn` (or it returns
-`None`), every `ClassifierTrace.label_truth` ends up as `None` and the
-`labels` dict is empty. Useful for pretraining or inference-time use
-on unlabeled data:
+Since `synthetic_bank` **2.0** the bank carries its own labels — a plain
+int per trace, with the `{int: name}` map recorded per simulation
+alongside the policy that produced it — so **no `label_fn` is needed**.
+Supply one only to deliberately *re-label* a bank, e.g. collapsing a
+multiclass severity bank to binary for a comparison run:
 
 ```python
-unlabeled = load_synthetic_bank_as_classifier("data/hybrid_v1.h5")
+import numpy as np
+
+def to_binary(bank):
+    raw = np.asarray([int(getattr(x, "root", x)) for x in bank.traces.label])
+    return (raw > 0).astype(np.int64), {0: "healthy", 1: "fibrotic"}
+
+binary = load_synthetic_bank_as_classifier("data/severity_v2.h5", label_fn=to_binary)
 ```
 
-The IAFDB side is symmetric:
+To treat a bank as **unlabeled** (pretraining, inference-time), pass a
+`label_fn` that returns `None`. Note this changed at 2.0: *omitting*
+`label_fn` used to mean "unlabeled" and now means "use the bank's own
+labels".
+
+```python
+unlabeled = load_synthetic_bank_as_classifier("data/synthetic_v1_5.h5", label_fn=lambda b: None)
+```
+
+The IAFDB bank carries no labels at all, so there a `label_fn` is still
+the only way to get them:
 
 ```python
 from myocard_egm_data.banks import load_iafdb_bank_as_classifier
@@ -66,6 +72,45 @@ def iafdb_label_fn(bank):
 
 iafdb = load_iafdb_bank_as_classifier("data/iafdb_v1.h5", label_fn=iafdb_label_fn)
 ```
+
+### Read generation parameters (θ) from a synthetic bank
+
+The `ClassifierBank` is a **source-agnostic ML compression**: signal,
+label, and the keys needed to join back. Generation parameters live on
+the `synthetic_bank`, which is a **parallel artifact sharing a key** —
+not a thing the ClassifierBank is derived from. Read θ from the typed
+bank, never from `trace_metadata`:
+
+```python
+from myocard_egm_data.banks import read_synthetic_bank_hdf5, simulation_configs
+
+bank = read_synthetic_bank_hdf5("data/synthetic_v1_5.h5")
+
+# The bank-scoped theta-spec: which knobs this sweep varied.
+for knob in bank.generation_params.knobs:
+    print(knob.path, knob.bounds, knob.role)
+
+# Per-simulation config, as a row view keyed by simulation_id.
+configs = simulation_configs(bank)
+print(configs[0].substrate)     # typed Substrate variant
+print(configs[0].label_policy)  # typed LabelPolicy variant
+```
+
+To line features up with θ per trace, join the two banks on
+`simulation_id`:
+
+```python
+from myocard_egm_data.banks import join_traces_with_simulations
+
+for pair in join_traces_with_simulations(cb, bank):
+    trace, sim = pair.trace, pair.simulation
+    ...  # trace.signal / trace.label_truth beside sim.substrate, sim.cell_model, ...
+```
+
+The join refuses mismatched banks, unknown `simulation_id`s and
+duplicate simulation ids rather than returning partial results —
+`simulation_id` restarts at 0 in every bank, so a mismatched join would
+otherwise produce a full set of confident, wrong pairings.
 
 ### Read or write a noise bank
 
@@ -169,6 +214,11 @@ epochs = [
     EpochRecord(
         epoch=1, lr=1e-3, train_loss=0.5, val_loss=0.45, epoch_seconds=12.0,
         val_metrics={"auroc": 0.85, "accuracy": 0.80, "f1": 0.79, "ece": 0.05},
+        # training_run_record 1.2: the train-split metrics, so the record
+        # shows train-vs-val divergence. Optional — omit it and the field
+        # is simply unset, which is what lets a producer adopt 1.2 before
+        # it emits them.
+        train_metrics={"auroc": 0.99, "accuracy": 0.97, "f1": 0.98, "ece": 0.01},
         val_reliability=[
             ReliabilityBin(lo=0.0, hi=0.5, count=10, confidence=0.25, accuracy=0.20),
             ReliabilityBin(lo=0.5, hi=1.0, count=10, confidence=0.75, accuracy=0.80),
@@ -178,8 +228,12 @@ epochs = [
 ]
 
 record = build_training_run_record(
-    config={"input_length": 512, "batch_size": 64, "lr": 1e-3},
-    run_meta={"run_id": "v1-baseline", "git_sha": "abc1234", "host": "workstation"},
+    # Artifact paths here should be repo-relative, not absolute: an
+    # absolute path records the machine that trained, not the artifact.
+    config={"input_length": 192, "batch_size": 64, "lr": 1e-3},
+    # `host` is deliberately not a well-known key — it identified the
+    # machine, which nothing downstream read.
+    run_meta={"run_id": "v1-baseline", "git_sha": "abc1234"},
     epoch_records=epochs,
     select_metric="auroc",
     test_loss=0.40,
@@ -334,7 +388,7 @@ from `label_truth=0`.
 
 | Module | What's in it |
 |---|---|
-| `myocard_egm_data.banks` | `ClassifierBank` + per-trace types, converters from Pydantic `SyntheticBank` / `IafdbBank`, `read_*_hdf5` Pydantic readers (synthetic / iafdb / noise), `write_*` Pydantic writers (synthetic / iafdb / noise), ClassifierBank HDF5 I/O |
+| `myocard_egm_data.banks` | `ClassifierBank` + per-trace types, converters from Pydantic `SyntheticBank` / `IafdbBank`, `read_*_hdf5` Pydantic readers (synthetic / iafdb / noise), `write_*` Pydantic writers (synthetic / iafdb / noise), ClassifierBank HDF5 I/O, the `simulation_configs` / `join_traces_with_simulations` bank-join, and the stable-id content checks |
 | `myocard_egm_data.records` | One per-file module per schema, mirroring the per-schema layout in `myocard-egm-contracts._generated.python`: `training_run_record` (run.json), `training_metrics` (metrics.csv), `egm_class_model_metadata` (1-D EGM-classifier inference sidecar), `noise_bank_run_record` (noise-bank provenance sidecar). Each module owns `build_*` (where applicable) + `write_*` + `load_*` and re-exports its Pydantic models |
 | `myocard_egm_data.phases` | Typed I/O for the cross-artifact-linkage JSON formats (egm-contracts v0.5.0): `phase_manifest` (per-phase `manifest.json`), `observation`, `figure_spec`. Each module owns `load_*` / `write_*` and re-exports its Pydantic models |
 
