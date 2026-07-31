@@ -2,8 +2,9 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 8/12 steps done (S1–S8 ✅) — **DAT1 is complete**; suite green
-at 75 passed. Remaining: S9–S10 (DAT3, which owns the last 6 mypy errors), S11 (B16), S12 (docs/exit).
+**Status:** in progress · **Progress:** 9/12 steps done (S1–S9 ✅) — DAT1 complete, DAT3's JSON half in;
+suite green at 80 passed. Remaining: S10 (the CSV half, which clears the last 6 mypy errors), S11 (B16),
+S12 (docs/exit).
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -400,7 +401,7 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   correct and more useful error. Now it asserts the refusal plainly, and the missing-key path has its
   own honest test.
 
-### S9 — DAT3a · `training_run_record` 1.2 JSON (P1 · B18 · B15 · B14) ☐ (2–5 h)
+### S9 — DAT3a · `training_run_record` 1.2 JSON (P1 · B18 · B15 · B14) ✅
 - **Change:** `records/training_run_record.py` — `make_epoch_record` gains a **`train_metrics=None`
   keyword-optional** parameter *(CL-022)*, given the same treatment as `val_metrics` (flat dict in,
   non-finite floats sanitized). **Optional by design:** egm-classifier's CLF5 Wave-1 migration writes
@@ -415,6 +416,22 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   `"reliability"` key inside `train_metrics` is dropped and produces no second field; `best_epoch` still
   selects on `val_metrics` only (train metrics must not leak into selection).
 - **Depends on:** S1. Parallel with S5–S8 (different module).
+- **Result:** ✅ 5 new tests; suite **80 passed / 0 failed** (+5); ruff clean. mypy unchanged at the 6
+  `training_metrics.py` errors — S10 clears those.
+- **B18 turned out to be a real bug, not a description tightening.** The linkage doc frames B18 as
+  aligning `HeldOutTest.metrics` to the val bundle, which reads like a validator/wording change. In our
+  code the asymmetry was in *behavior*: `build_training_run_record` ran val bins through
+  `_coerce_reliability_bin` but passed **test** bins through as `list(...)` raw — so a plain mapping or
+  a namedtuple that worked for val silently failed for test. Test bins now take the same path, which is
+  what "parity" should have meant.
+- **The dropped-`reliability` asymmetry is deliberate and pinned by test.** A `"reliability"` key
+  inside `train_metrics` is discarded rather than split into a second field, since `train_reliability`
+  is out of scope for 1.2 (FB-10) and there is nowhere to put it. Dropping beats raising: a producer
+  computing one metrics dict per split will naturally pass reliability on both, and failing would force
+  it to special-case a field it cannot store. Tested so the next reader doesn't "fix" it.
+- **B15 / B14 are docstring-only here, as scoped.** `host` left the documented well-known `run` keys
+  and the `config` docstring now states the repo-relative-path convention. The `run` object still
+  allows extra keys, so a producer wanting `host` isn't blocked — it just isn't in the documented set.
 
 ### S10 — DAT3b · `training_metrics` CSV train columns ☐ (1–2 h)
 - **Change:** `records/training_metrics.py` — `_epoch_to_row` pulls the six well-known scalars from
