@@ -316,7 +316,7 @@ def test_noise_bank_round_trip_validates(noise_bank_path: Path) -> None:
     """The slim noise_bank writer must produce a file the contracts'
     file-level validator accepts. The schema carries only signal +
     source_record + source_channel per trace, plus schema_version /
-    created_utc / source / fs_hz at the root."""
+    created_utc / bank_id / source / fs_hz at the root."""
     result = validate_noise_bank(noise_bank_path)
     assert result.ok, result.issues
 
@@ -329,6 +329,10 @@ def test_noise_bank_reader_round_trips(noise_bank_path: Path) -> None:
     pyd_bank = read_noise_bank_hdf5(noise_bank_path)
     assert pyd_bank.fs_hz == 1000.0
     assert pyd_bank.source == "iafdb v1.0.0"
+    # noise_bank 1.1: the stable id now rides on the bank itself, so
+    # egm-studio's Noise view no longer has to open the sibling run
+    # record just to learn which bank it is looking at (B20).
+    assert pyd_bank.bank_id == "nbank_iafdb_test_2026-07-31"
     assert len(pyd_bank.traces.signal) == 4
     assert len(pyd_bank.traces.signal[0]) == 512
     # source_record / source_channel are the audit fields propagated to
@@ -356,3 +360,50 @@ def test_noise_bank_overwrite_guard(tmp_path: Path, noise_bank_path: Path) -> No
     assert reloaded.source == pyd_bank.source
     # Quiet the unused-import warning for type-only reference.
     assert noise_bank_models.NoiseBank is not None
+
+
+def test_noise_bank_without_bank_id_reads_as_none(tmp_path: Path, noise_bank_path: Path) -> None:
+    """A pre-1.1 noise bank carries no bank_id root attr and must still
+    read, with bank_id None rather than "".
+
+    ``bank_id`` is optional-in-schema precisely so banks written before
+    egm-contracts v0.6.0 stay readable. The distinction matters: an
+    empty string would satisfy "a str is present" at every call site and
+    then fail the ArtifactId pattern deep inside some later consumer,
+    whereas None is explicitly "this bank predates stable ids"."""
+    import h5py
+
+    legacy = tmp_path / "legacy_noise.h5"
+    legacy.write_bytes(noise_bank_path.read_bytes())
+    with h5py.File(legacy, "a") as f:
+        del f.attrs["bank_id"]
+
+    pyd_bank = read_noise_bank_hdf5(legacy)
+    assert pyd_bank.bank_id is None
+    # Everything else still round-trips — dropping the id is not a
+    # partial read.
+    assert pyd_bank.source == "iafdb v1.0.0"
+    assert len(pyd_bank.traces.signal) == 4
+
+
+def test_write_noise_bank_requires_bank_id(tmp_path: Path, noise_bank_path: Path) -> None:
+    """Reading a legacy bank is allowed; writing one back is not.
+
+    This is the "optional-in-schema, required-on-write" convention the
+    linkage design applies to every producer bank — the schema cannot
+    express it, so the writer enforces it. Without this guard a
+    round-trip through egm-data would silently launder a legacy bank
+    into a new file that still has no stable id, and nothing downstream
+    could reference it."""
+    import h5py
+    import pytest
+
+    legacy = tmp_path / "legacy_noise.h5"
+    legacy.write_bytes(noise_bank_path.read_bytes())
+    with h5py.File(legacy, "a") as f:
+        del f.attrs["bank_id"]
+    pyd_bank = read_noise_bank_hdf5(legacy)
+    assert pyd_bank.bank_id is None
+
+    with pytest.raises(ValueError, match="bank_id"):
+        write_noise_bank(pyd_bank, tmp_path / "rewritten.h5")

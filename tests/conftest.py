@@ -151,10 +151,11 @@ def noise_bank_path(tmp_path: Path, fs_hz: float, n_samples: int) -> Path:
     """Build a tiny Pydantic NoiseBank and write it to HDF5.
 
     Four traces from two patients x two bipolar channels. The schema
-    (v1.0) is intentionally minimal — only signal + source_record +
-    source_channel per trace plus schema_version / created_utc / source
-    / fs_hz at the root. Extraction provenance lives in the sibling
-    noise_bank_run_record JSON; see the records-side fixture for that.
+    (v1.1) is intentionally minimal — only signal + source_record +
+    source_channel per trace plus schema_version / created_utc /
+    bank_id / source / fs_hz at the root. Extraction provenance lives
+    in the sibling noise_bank_run_record JSON; see the records-side
+    fixture for that.
     """
     rng = np.random.default_rng(2)
     n = 4
@@ -164,6 +165,7 @@ def noise_bank_path(tmp_path: Path, fs_hz: float, n_samples: int) -> Path:
         {
             "schema_version": current_version("noise_bank"),
             "created_utc": _now_iso(),
+            "bank_id": "nbank_iafdb_test_2026-07-31",
             "source": "iafdb v1.0.0",
             "fs_hz": fs_hz,
             "traces": {

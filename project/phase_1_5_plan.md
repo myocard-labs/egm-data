@@ -2,7 +2,7 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 1/12 steps done (S1 ✅)
+**Status:** in progress · **Progress:** 2/12 steps done (S1 ✅ · S2 ✅)
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -167,13 +167,29 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
 > **contained inside the single PR** — nothing red reaches `release`, and `development` is not a
 > bisect surface mid-wave. **Closes at S7**; S12's pre-PR run is the real gate.
 
-### S2 — P5 `noise_bank` 1.1 `bank_id` (B20) ☐ (1–3 h)
+### S2 — P5 `noise_bank` 1.1 `bank_id` (B20) ✅
 - **Change:** `banks/noise_bank.py` — `write_noise_bank` stamps `f.attrs["bank_id"]` (optional-in-schema,
   **required-on-write**, matching the existing `write_synthetic_bank` / `write_iafdb_bank` guard);
-  `read_noise_bank_hdf5` surfaces it via the `_opt_str_attr` pattern (`None` on legacy banks).
-- **Verify:** round-trip test asserting the id survives; a legacy bank without the attr still reads with
-  `bank_id is None`; write-without-id raises.
+  `read_noise_bank_hdf5` surfaces it via a new `_opt_str_attr` helper (`None` on legacy banks, never
+  `""`). Fixture + module docstrings updated 1.0 → 1.1.
+- **Verify:** ✅ 7 noise tests pass (5 existing + 2 new: legacy-bank-reads-as-`None`,
+  write-without-id-raises). Full suite **32 passed / 10 errored** — up 2 passes, the 10 synthetic errors
+  unchanged. ruff clean; mypy still exactly 33 errors with **0 in `noise_bank.py`**, so the step added
+  no new type debt. Contracts validator accepts the stamped bank.
 - **Depends on:** S1.
+
+> **Found while implementing — a contract obligation my plan missed.** The shipped `noise_bank` 1.1
+> `bank_id` description assigns egm-data a **cross-file check**: "The sibling `noise_bank_run_record`
+> carries the same id …; when both are present they **MUST agree** — egm-data checks that, since JSON
+> Schema cannot compare across two files." That is a third piece beyond stamp-and-surface, and it isn't
+> in any of my steps. **Routed to S11**, not here: S11 is already the id-consistency step (B16's role
+> prefix ↔ bank content), so all egm-data-enforced id invariants land in one module rather than being
+> scattered across the bank writers. Raised to the project-lead in **CL-091** — it's a contracts-authored
+> expectation, so they should know it's tracked and where. **Confirmed by Daniel (2026-07-31):** the
+> underlying `bank_id`-duplicated-across-bank-and-record issue is already **known and backlog-tracked**
+> from the egm-contracts work, and S11 is the right home for the validation half. So this is enforcement
+> of a known duplication, not a new discovery — the backlog item may eventually remove the duplication
+> and with it the need for the check.
 
 ### S3 — P6 `iafdb_bank` 1.3 — `run_record_path` (B11) + `activation_position` (CL-053) ☐ (1–3 h)
 - **Change:** two additive pieces on the same 1.3 bump. **(a)** `banks/writers.py` `write_iafdb_bank`
@@ -297,6 +313,10 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   else and is no longer conditional.
 
 ### S11 — B16 · `ArtifactId` role ↔ content consistency check ☐ (2–5 h)
+- **Also here — the `noise_bank` ↔ `noise_bank_run_record` id-agreement check** (found at S2; the
+  contracts 1.1 `bank_id` description explicitly assigns it to egm-data). When both files are present
+  their `bank_id`s must match; JSON Schema can't compare across files, so this is ours. Lands here with
+  the other id invariants rather than in the noise-bank writer.
 - **Change:** new content check in `banks/` — given a bank and its stable id, assert the role prefix
   matches what the bank actually holds (a `tbank_` has `label_truth`; a `upred_` has none; a `lpred_`
   has both labels and predictions; an `nbank_` is a noise bank). Wired into the writers so a
