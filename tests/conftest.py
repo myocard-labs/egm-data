@@ -6,13 +6,23 @@ and handing them to ``write_synthetic_bank`` / ``write_iafdb_bank`` /
 ``write_noise_bank``. There is no parallel set of dataclasses in
 egm-data anymore; the contracts package is the only place those types
 live.
+
+One deliberate exception: ``synthetic_bank_2_0_raw_path`` writes its
+HDF5 **by hand with h5py**, not through our writer. The reader and the
+writer are the two halves of the same restructure, so testing the
+reader against writer output would let a shared misreading of the
+schema pass unnoticed. The hand-built file is laid out from the
+schema's ``x-hdf5-mapping`` directly, which is also what the producer
+(SEP12) will target.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pytest
 from myocard_egm_contracts import iafdb_bank as iafdb_bank_models
@@ -21,6 +31,8 @@ from myocard_egm_contracts import synthetic_bank as synthetic_bank_models
 from myocard_egm_contracts.schema_info import current_version
 
 from myocard_egm_data.banks import write_iafdb_bank, write_noise_bank, write_synthetic_bank
+
+_STR_DTYPE = h5py.string_dtype(encoding="utf-8")
 
 
 @pytest.fixture
@@ -40,6 +52,187 @@ def n_samples(fs_hz: float, trace_duration_ms: float) -> int:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# synthetic_bank 2.0 — hand-built HDF5 (independent of our writer)
+# ---------------------------------------------------------------------------
+
+#: Per-simulation config for the two simulations in the 2.0 fixture.
+#: Simulation 0 is healthy (density 0.0), simulation 1 fibrotic (0.3),
+#: so the int labels differ and a converter that mixes up the join shows
+#: up as a label mismatch rather than a silent metadata swap.
+SIM_2_0 = [
+    {
+        "simulation_id": 0,
+        "seed": 100,
+        "geometry": {"type": "patch_2d", "size_mm": 40.0, "dr_mm": 0.25},
+        "cell_model": {"type": "courtemanche", "params": {"g_CaL_scale": 1.0}},
+        "substrate": {"type": "uniform_random_fibrosis", "density": 0.0},
+        "substrate_summary": {"realized_density": 0.0, "n_fibrotic_nodes": 0},
+        "activation": {"type": "planar_edge", "edges": ["top"]},
+        "electrodes": {
+            "type": "centered_grid_2d",
+            "n_rows": 5,
+            "n_cols": 5,
+            "spacing_mm": 2.0,
+            "height_mm": 0.5,
+            "pairs": [
+                {"pair_index": 0, "electrode_row": 0, "height_mm": 0.5},
+                {"pair_index": 1, "electrode_row": 0, "height_mm": 0.5},
+                {"pair_index": 2, "electrode_row": 1, "height_mm": 1.0},
+            ],
+        },
+        "backend": {"type": "finitewave", "output_fs_hz": 1000.0},
+        "label_policy": {"type": "global_density", "thresholds": [0.1]},
+        "label_names": {"0": "healthy", "1": "fibrotic"},
+    },
+    {
+        "simulation_id": 1,
+        "seed": 200,
+        "geometry": {"type": "patch_2d", "size_mm": 40.0, "dr_mm": 0.25},
+        # A different variant on the polymorphic union, so the fixture
+        # proves the discriminator is honoured per row rather than being
+        # decided once for the whole column.
+        "cell_model": {"type": "aliev_panfilov", "ap_time_unit_ms": 12.9},
+        "substrate": {"type": "uniform_random_fibrosis", "density": 0.3},
+        "substrate_summary": {"realized_density": 0.298, "n_fibrotic_nodes": 4768},
+        "activation": {"type": "point", "position_mm": [20.0, 20.0]},
+        "electrodes": {
+            "type": "centered_grid_2d",
+            "n_rows": 5,
+            "n_cols": 5,
+            "spacing_mm": 2.0,
+            "height_mm": 0.5,
+            "pairs": [
+                {"pair_index": 0, "electrode_row": 0, "height_mm": 0.5},
+                {"pair_index": 1, "electrode_row": 0, "height_mm": 0.5},
+                {"pair_index": 2, "electrode_row": 1, "height_mm": 1.0},
+            ],
+        },
+        "backend": {"type": "finitewave", "output_fs_hz": 1000.0},
+        "label_policy": {"type": "global_density", "thresholds": [0.1]},
+        "label_names": {"0": "healthy", "1": "fibrotic"},
+    },
+]
+
+#: The bank-scoped theta-spec. Deliberately non-trivial (one swept knob)
+#: even though Wave-1 producer output has an empty sweep, so the reader
+#: is exercised against a populated spec rather than only the empty case.
+GENERATION_PARAMS_2_0 = {
+    "regime": {
+        "geometry": "patch_2d",
+        "cell_model": "courtemanche",
+        "substrate": "uniform_random_fibrosis",
+    },
+    "knobs": [
+        {
+            "path": "substrate.density",
+            "bounds": [0.0, 0.5],
+            "transform": "identity",
+            "role": "label_param",
+        }
+    ],
+}
+
+SYNTHETIC_2_0_BANK_ID = "tbank_synthetic_v2_test_2026-07-31"
+
+_SIM_JSON_COLUMNS = (
+    "geometry",
+    "cell_model",
+    "substrate",
+    "substrate_summary",
+    "activation",
+    "electrodes",
+    "backend",
+    "label_policy",
+    "label_names",
+)
+
+
+def write_synthetic_bank_2_0_by_hand(
+    path: Path,
+    *,
+    fs_hz: float,
+    trace_duration_ms: float,
+    n_samples: int,
+    with_activation_position: bool = False,
+) -> Path:
+    """Write a schema-2.0 synthetic bank directly with h5py.
+
+    Laid out from the schema's ``x-hdf5-mapping``: root attrs (with the
+    theta-spec JSON-encoded as ``generation_params_json``), a
+    ``simulations/`` group whose polymorphic config objects are one JSON
+    document per row under ``<name>_json``, and the collapsed
+    ``traces/`` group.
+
+    Six traces over two simulations, three bipolar pairs each. Labels
+    follow the per-simulation substrate: sim 0 healthy -> 0, sim 1
+    fibrotic -> 1.
+    """
+    rng = np.random.default_rng(0)
+    n = 6
+    signal = rng.standard_normal((n, n_samples)).astype(np.float32)
+    sim_id = [0, 0, 0, 1, 1, 1]
+    pair_index = [0, 1, 2, 0, 1, 2]
+    label = [0, 0, 0, 1, 1, 1]
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(path, "w") as f:
+        f.attrs["schema_version"] = current_version("synthetic_bank")
+        f.attrs["created_utc"] = _now_iso()
+        f.attrs["bank_id"] = SYNTHETIC_2_0_BANK_ID
+        f.attrs["description"] = "synthetic_bank 2.0 hand-built fixture"
+        f.attrs["fs_hz"] = float(fs_hz)
+        f.attrs["trace_duration_ms"] = float(trace_duration_ms)
+        f.attrs["noise_bank_source"] = "iafdb_noise_v1.h5"
+        f.attrs["generation_params_json"] = json.dumps(GENERATION_PARAMS_2_0, sort_keys=True)
+
+        sims = f.create_group("simulations")
+        sims.create_dataset(
+            "simulation_id", data=np.asarray([s["simulation_id"] for s in SIM_2_0], dtype=np.int64)
+        )
+        sims.create_dataset("seed", data=np.asarray([s["seed"] for s in SIM_2_0], dtype=np.int64))
+        for name in _SIM_JSON_COLUMNS:
+            sims.create_dataset(
+                f"{name}_json",
+                data=np.asarray(
+                    [json.dumps(s[name], sort_keys=True) for s in SIM_2_0], dtype=object
+                ),
+                dtype=_STR_DTYPE,
+            )
+
+        traces = f.create_group("traces")
+        traces.create_dataset("signal", data=signal, dtype=np.float32)
+        traces.create_dataset("simulation_id", data=np.asarray(sim_id, dtype=np.int64))
+        traces.create_dataset("pair_index", data=np.asarray(pair_index, dtype=np.int64))
+        traces.create_dataset("label", data=np.asarray(label, dtype=np.int64))
+        traces.create_dataset("snr_db", data=np.asarray([15.0] * n, dtype=np.float64))
+        traces.create_dataset(
+            "noise_record", data=np.asarray(["iaf1_afw"] * n, dtype=object), dtype=_STR_DTYPE
+        )
+        traces.create_dataset(
+            "noise_channel", data=np.asarray(["CS12"] * n, dtype=object), dtype=_STR_DTYPE
+        )
+        if with_activation_position:
+            traces.create_dataset(
+                "activation_position",
+                data=np.asarray([0.0, 0.25, 0.5, 0.5, 0.75, 1.0], dtype=np.float32),
+            )
+    return path
+
+
+@pytest.fixture
+def synthetic_bank_2_0_raw_path(
+    tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_samples: int
+) -> Path:
+    """A schema-2.0 bank written by hand, without our writer (see module docstring)."""
+    return write_synthetic_bank_2_0_by_hand(
+        tmp_path / "synthetic_bank_2_0.h5",
+        fs_hz=fs_hz,
+        trace_duration_ms=trace_duration_ms,
+        n_samples=n_samples,
+    )
 
 
 @pytest.fixture

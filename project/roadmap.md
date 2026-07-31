@@ -42,8 +42,24 @@ lands at **1.2** — the "1.1" this entry previously claimed is already spoken f
 
 ## Phase 2 — multiclass severity
 
-*(No egm-data items currently scheduled — the polymorphic `stimulation` work moved to Phase 1.5, see
-above.)*
+### Retire the local config-model unwrap helpers
+
+`tests/test_synthetic_bank_2_0.py` carries `_unwrap` / `_type_name` helpers that paper over an
+asymmetry in the generated `simulation_config` models: a union with a **single** variant codegens as
+a `RootModel` (needs `.root`) with a `const` discriminator (a plain `str`), while a multi-variant
+union codegens as a direct discriminated union (no `.root`) with an `Enum` discriminator (needs
+`.value`). Both shapes **flip when a variant is added**, with no schema change or version bump to
+signal it — so a purely additive extension silently breaks every consumer that hard-coded today's
+shape.
+
+Scheduled for a **Phase-2 fix in egm-contracts** (Daniel, 2026-07-31), either by making every `oneOf`
+codegen identically regardless of member count or by shipping the accessor once beside the generated
+models. When that lands, egm-data drops its local helpers and re-pins. Deliberately *not* fixed in
+1.5: no union gains a variant this phase, since patchy / interstitial fibrosis is out of scope, so
+nothing triggers it.
+
+> Cross-repo: egm-studio (STU1 / STU4 / STU6) and the parameter estimator read these models directly
+> and will each need the same treatment. Raised as coordination-log CL-093 / CL-094.
 
 ## Phase 4 — feature banks (egm-features / Refactor Step 4)
 

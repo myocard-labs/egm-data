@@ -2,8 +2,8 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 4/12 steps done (S1 ✅ · S2 ✅ · S3 ✅ · S4 ✅) — the additive
-trio is done and the v0.6.0 codegen is proven; next is the S5–S8 synthetic restructure.
+**Status:** in progress · **Progress:** 5/12 steps done (S1–S5 ✅) — the additive trio landed and the
+2.0 reader is in; the red window closes when S6/S7 replace the 1.1-shaped fixture.
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -242,7 +242,7 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   — since the two fields are independently optional and a curator that knows only half shouldn't be
   pushed back into a sentinel.
 
-### S5 — DAT1a · `synthetic_bank` 2.0 **reader** ☐ (2.5–5 h)
+### S5 — DAT1a · `synthetic_bank` 2.0 **reader** ✅
 - **Change:** `banks/readers.py` — replace the flat-root-attr read with: root attrs
   (`schema_version` / `created_utc` / `bank_id` / `description` / `fs_hz` / `trace_duration_ms` /
   `noise_bank_source` / `generation_params_json` = the θ-spec) + a new `simulations/` group decoding
@@ -253,9 +253,36 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   `[0,1]` float, absent in Wave 1 and populated by SEP2 in Wave 2). Drop the removed columns and the old
   `fibrosis_params_json` / `electrode_config_json` / `mixer_config_json` / `experiment_config_json`
   root attrs.
-- **Verify:** unit test reading a hand-built 2.0 fixture; every `*_json` column decodes to the right
-  discriminated variant; a 1.1 fixture raises the unsupported-version error.
+- **Verify:** ✅ 10 tests in the new `tests/test_synthetic_bank_2_0.py`; suite **48 passed / 10
+  errored** (+10, the remaining errors are the 1.1-shaped fixture that S6/S7 replace); ruff clean; mypy
+  unchanged at 33 with **0 in `readers.py`**.
 - **Depends on:** S1.
+- **The fixture is hand-built, deliberately.** `conftest.write_synthetic_bank_2_0_by_hand` lays the
+  HDF5 out from the schema's `x-hdf5-mapping` with raw h5py rather than going through our writer.
+  Reader and writer are two halves of one restructure: testing the reader against writer output would
+  let a *shared* misreading of the schema round-trip perfectly and still be wrong. The first test
+  asserts the hand-built file passes the contracts validator, so the reference itself is guarded. The
+  two simulations use **different variants** on the `cell_model` and `activation` unions, which fails
+  if the reader ever resolves a union once per column instead of per row.
+
+> **Finding — the generated config models are asymmetric, and the asymmetry flips with variant count.**
+> A union with **one** variant today (`Geometry`, `Substrate`, `Electrodes`, `Backend`) codegens as a
+> `RootModel`, so reaching the object needs `.root`; a union with **several** (`CellModel`,
+> `Activation`, `LabelPolicy`) codegens as a direct discriminated union with no wrapper. The
+> discriminator has the same split: a sole variant gets a `const` → plain `str`, a multi-variant union
+> gets an `Enum` → needs `.value`. So `geometry.root.size_mm` but `cell_model.ap_time_unit_ms`;
+> `cell_model.type.value` but `geometry.type`. **The trap:** both shapes *change when a variant is
+> added* — the day Phase 7 adds a second `Geometry`, every `geometry.root…` in every consumer breaks,
+> and nothing in the schema changed. My tests unwrap defensively via `_unwrap` / `_type_name` helpers
+> so they survive that. **egm-studio (STU6/STU1/STU4) and the estimator will hit this**, so it's raised
+> in **CL-093** rather than solved locally — a shared accessor in contracts would be the real fix.
+>
+> **✓ Settled (Daniel, 2026-07-31):** patchy / interstitial fibrosis is **not** implemented in Phase 1.5,
+> so `Substrate` stays single-variant and **no trigger fires this phase** — the in-phase urgency
+> CL-094 raised is withdrawn. The asymmetry goes to the **backlog, fixed in Phase 2** (project-lead to
+> assign the FB id; the fix is contracts-side). egm-data needs nothing further now: the local
+> `_unwrap` / `_type_name` helpers are the interim insulation and are written to survive the flip
+> either way. Retiring them once contracts ships the fix is logged in `roadmap.md`.
 
 ### S6 — DAT1b · `synthetic_bank` 2.0 **writer** + round-trip ☐ (2–4 h)
 - **Change:** `banks/writers.py` — mirror S5. `simulations/` datasets sized `(M,)`; `traces/` sized
