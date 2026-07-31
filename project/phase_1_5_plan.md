@@ -2,9 +2,8 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 10/12 steps done (S1–S10 ✅) — **DAT1 + DAT3 complete; pytest,
-ruff and mypy all clean** (83 passed, no mypy issues), the first fully-green state since the S1 re-pin.
-Remaining: S11 (B16 + the noise-bank id-agreement check), S12 (docs / version bump / phase exit).
+**Status:** in progress · **Progress:** 11/12 steps done (S1–S11 ✅) — all code complete; **97 passed,
+ruff + mypy clean**. Remaining: S12 (docs / CHANGELOG / roadmap / v0.6.0 bump / pre-PR run).
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -462,7 +461,7 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   order. Confirmed the shipped order pairs the splits as CL-037 requested:
   `epoch, lr, train_loss, train_auroc…train_ece, val_loss, val_auroc…val_ece, epoch_seconds`.
 
-### S11 — B16 · `ArtifactId` role ↔ content consistency check ☐ (2–5 h)
+### S11 — B16 · `ArtifactId` role ↔ content consistency check ✅
 - **Also here — the `noise_bank` ↔ `noise_bank_run_record` id-agreement check** (found at S2; the
   contracts 1.1 `bank_id` description explicitly assigns it to egm-data). When both files are present
   their `bank_id`s must match; JSON Schema can't compare across files, so this is ours. Lands here with
@@ -472,9 +471,40 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   has both labels and predictions; an `nbank_` is a noise bank). Wired into the writers so a
   mislabelled bank can't be written. The **prefix-is-a-known-role** validation itself is
   egm-contracts' half.
-- **Verify:** parametrized test over each role — correct content passes, mismatched content raises with
-  a message naming both the id and what was found.
+- **Verify:** ✅ 14 tests in the new `test_id_consistency.py`; suite **97 passed / 0 failed**; ruff
+  clean; mypy clean.
 - **Depends on:** S1. Parallel with S5–S10.
+- **The check found a real mislabelling on its first run — in our own test data.**
+  `test_classifier_bank_id_round_trips` built a bank carrying `label_truth` and no prediction and gave
+  it a **`upred_`** id, which claims exactly the opposite. Corrected to `tbank_`. That is the case for
+  B16 in miniature: the id validated fine against the contracts pattern, the bank round-tripped
+  correctly, every test passed — the id was simply lying, and nothing in the stack could tell.
+- **Two independent, *exact* claims per role** — the four roles are the product of a labels axis and a
+  predictions axis, and both are checked in both directions:
+
+  | role | labels | predictions |
+  |---|---|---|
+  | `tbank_` training | present | **absent** |
+  | `lpred_` labeled prediction | present | present |
+  | `ptbank_` pretraining | absent | **absent** |
+  | `upred_` unlabeled prediction | absent | present |
+
+  **Corrected after review (Daniel, 2026-07-31).** My first version let `tbank_` / `ptbank_` carry
+  predictions on the reasoning that those roles "say nothing about" them. That was my own invention and
+  contradicts the linkage doc's role table: a labeled bank that has been evaluated **is** an
+  `lpred_` ("Predictions + truth labels — full metric suite available"), and the unlabeled equivalent
+  is `upred_`. Now enforced, with the error naming the role the artifact should have used. In practice
+  it barely arises today because eval writes a **new** bank rather than mutating the source — CLF4b
+  settled that explicitly ("the predictions artifact gains a per-trace split + prediction … *not* a
+  mutation of the source bank") — but encoding the exact rule means that if predictions are ever
+  attached in place, the id is forced to keep up instead of going quietly stale.
+- **The asymmetry worth naming:** a `upred_` bank that *does* carry labels is the more damaging
+  direction. It doesn't produce a wrong number — a consumer seeing `upred_` skips ground-truth
+  comparison entirely, so it produces a **silently missing evaluation** the data could have supported.
+  Harder to notice than a bad value.
+- **Wired into the writer, not offered to callers.** A mislabelled bank cannot be written, and the
+  failed write leaves no file behind — so the producer learns while it can still fix it, and the bad
+  artifact never reaches a phase manifest where other artifacts start pointing at it.
 
 ### S12 — Docs + phase-exit ☐ (1–3 h)
 - **Change:** `docs/usage.md` (the 2.0 bank example, the converter's new label behavior, the fact that

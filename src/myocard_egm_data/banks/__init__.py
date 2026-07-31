@@ -49,6 +49,11 @@ from .converters import (
     load_synthetic_bank_as_classifier,
     synthetic_bank_to_classifier,
 )
+from .id_consistency import (
+    check_classifier_bank_id_matches_content,
+    check_noise_bank_id_agreement,
+    check_noise_bank_pair,
+)
 from .joins import (
     SimulationConfig,
     TraceWithSimulation,
@@ -73,6 +78,9 @@ __all__ = [
     "SimulationConfig",
     "SyntheticLabelFn",
     "TraceWithSimulation",
+    "check_classifier_bank_id_matches_content",
+    "check_noise_bank_id_agreement",
+    "check_noise_bank_pair",
     "iafdb_bank_to_classifier",
     "join_traces_with_simulations",
     "load_classifier_bank",

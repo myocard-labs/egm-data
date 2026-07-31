@@ -58,6 +58,7 @@ from .classifier_bank import (
     ClassifierPrediction,
     ClassifierTrace,
 )
+from .id_consistency import check_classifier_bank_id_matches_content
 
 __all__ = [
     "load_classifier_bank",
@@ -85,6 +86,7 @@ def write_classifier_bank(
     path.parent.mkdir(parents=True, exist_ok=True)
 
     _check_join_key_name(bank)
+    check_classifier_bank_id_matches_content(bank)
 
     # Validate uniform trace length up front.
     if bank.traces:

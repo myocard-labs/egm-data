@@ -106,10 +106,14 @@ def _one_trace_bank(artifact_id: str | None) -> ClassifierBank:
 
 
 def test_classifier_bank_id_round_trips(tmp_path: Path) -> None:
-    bank = _one_trace_bank("upred_iafdb_v1_5_2026-06-27")
+    # `tbank_`, not `upred_`: the fixture's trace carries a label_truth
+    # and no prediction, which makes it a training bank. The id here was
+    # `upred_` until the S11 content check (B16) rejected it — a fair
+    # demonstration of the mislabelling that check exists to prevent.
+    bank = _one_trace_bank("tbank_iafdb_v1_5_2026-06-27")
     write_classifier_bank(bank, tmp_path / "c.classifier.h5")
     loaded = load_classifier_bank(tmp_path / "c.classifier.h5")
-    assert loaded.id == "upred_iafdb_v1_5_2026-06-27"
+    assert loaded.id == "tbank_iafdb_v1_5_2026-06-27"
     assert loaded.schema_version == "0.2"
 
 
