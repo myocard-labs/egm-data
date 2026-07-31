@@ -2,7 +2,8 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 3/12 steps done (S1 ✅ · S2 ✅ · S3 ✅)
+**Status:** in progress · **Progress:** 4/12 steps done (S1 ✅ · S2 ✅ · S3 ✅ · S4 ✅) — the additive
+trio is done and the v0.6.0 codegen is proven; next is the S5–S8 synthetic restructure.
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -224,13 +225,22 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
 > The remaining hits are all the "stamps it on every new bank" required-on-write guards, which are
 > already implemented for all three banks.
 
-### S4 — P4 `phase_manifest` optional `produced_by_*` (B19) ☐ (0.5–2 h)
-- **Change:** likely **no production code** — `phases/phase_manifest.py` is a Pydantic pass-through and
-  `_write_pydantic_json` already omits unset optionals. This step's deliverable is the **test** that
-  pins the behavior, plus whatever the loosened `required` arrays actually break.
-- **Verify:** a manifest entry with both `produced_by_*` absent round-trips (write → read → equal) and
-  the keys are **omitted**, not written as `null`.
+### S4 — P4 `phase_manifest` optional `produced_by_*` (B19) ✅
+- **Change:** **no production code**, as predicted — `phases/phase_manifest.py` is a Pydantic
+  pass-through, the regenerated entry models carry `produced_by_* = None` defaults, and
+  `_write_pydantic_json`'s `exclude_defaults=True` already omits them. The deliverable is the three
+  tests that pin the behavior.
+- **Verify:** ✅ 6 tests in `test_load_phase_dir.py` (3 existing + 3 new); suite **38 passed /
+  10 errored** (+3); ruff clean; mypy `src` unchanged at 33 and the touched test file clean.
 - **Depends on:** S1.
+- **Why tests and not just a changelog line.** The omit-don't-null behavior is a property of *our
+  serializer*, not of the schema: these fields are typed as plain strings, so an explicit `null` would
+  fail validation on the next read. Nothing in the schema stops a future refactor from switching
+  `exclude_defaults` to `exclude_none` or dropping the flag, and the failure would surface as an
+  unreadable manifest in egm-studio rather than here. The three tests cover absent-round-trips,
+  omitted-not-null (asserting on the raw JSON), and **partial** provenance — package known, version not
+  — since the two fields are independently optional and a curator that knows only half shouldn't be
+  pushed back into a sentinel.
 
 ### S5 — DAT1a · `synthetic_bank` 2.0 **reader** ☐ (2.5–5 h)
 - **Change:** `banks/readers.py` — replace the flat-root-attr read with: root attrs
