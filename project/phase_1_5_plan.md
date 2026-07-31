@@ -2,9 +2,8 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 7/12 steps done (S1–S7 ✅) — **DAT1's core is complete and the
-suite is green (67 passed)**; the declared red window closed at S7 as planned. Remaining: S8 (T4 join),
-S9–S10 (DAT3, which owns the last 6 mypy errors), S11 (B16), S12 (docs/exit).
+**Status:** in progress · **Progress:** 8/12 steps done (S1–S8 ✅) — **DAT1 is complete**; suite green
+at 75 passed. Remaining: S9–S10 (DAT3, which owns the last 6 mypy errors), S11 (B16), S12 (docs/exit).
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -362,7 +361,7 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   into every `simulations/seed` row; moving it to a root attr is backlogged via **CL-096**. No egm-data
   change this phase — we round-trip the column without interpreting it.
 
-### S8 — DAT1d · bank ⋈ bank joined view (T4) ☐ (2–4 h)
+### S8 — DAT1d · bank ⋈ bank joined view (T4) ✅
 - **Change:** new read-time joined view in `banks/` — given a synthetic-sourced ClassifierBank plus its
   `SyntheticBank`, return each trace paired with its typed `SimulationConfig`, joined on
   `simulation_id`. **Typed object out, no θ flattening** — STU1/STU4/STU5 read θ off the config the same
@@ -377,6 +376,29 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
 - **Depends on:** S5 (the typed `SyntheticBank`) + S7 (the ClassifierBank carrying the key).
 - **Not in scope:** generic `TunedParam.path` resolution and the predictions leg — both deferred with
   the path grammar per CL-024 §2; logged to `roadmap.md` at S12.
+- **Result:** ✅ new `banks/joins.py`; suite **75 passed / 0 failed** (+8); ruff clean; mypy still the
+  6 `training_metrics.py` errors only. Join cost at 2000 traces / 25 simulations: **0.0018 s** — a dict
+  lookup per trace, nowhere near mattering.
+- **API shape.** `simulation_configs()` transposes the column-oriented contracts `Simulations` model
+  into one `SimulationConfig` **row** per simulation; `join_traces_with_simulations()` pairs each trace
+  with its own. The per-function objects pass through **as the contracts models they already are** —
+  a reshape, not a reinterpretation — so consumers read θ off them exactly as they'd read any other
+  field, and the Phase-2 codegen fix (CL-095) lands on them unchanged.
+- **Three guards, all against *silent wrong answers* rather than crashes.** Worth naming because none
+  of them protects against an exception — each protects against a confident, plausible, wrong result:
+  1. **Mismatched banks.** `simulation_id` restarts at 0 in every bank, so joining a ClassifierBank
+     against a *different* synthetic bank yields a complete set of wrong pairings and no error at all.
+     Stable bank ids exist precisely so this is checkable, so it's a hard stop.
+  2. **Unknown `simulation_id`.** Raising beats returning `None`, which would push the decision onto
+     every consumer — and the natural consumer response, skipping the row, quietly drops traces from a
+     comparison.
+  3. **Duplicate simulation ids.** Ambiguous join; keeping the last would attach half the traces to
+     the wrong config.
+- **A test I rewrote rather than kept.** The IAFDB-refusal test initially used `object.__setattr__` to
+  force execution past the bank-correspondence guard and reach the missing-key message. That's the test
+  fighting the code: for a real IAFDB bank, "this synthetic bank isn't among your source banks" *is* the
+  correct and more useful error. Now it asserts the refusal plainly, and the missing-key path has its
+  own honest test.
 
 ### S9 — DAT3a · `training_run_record` 1.2 JSON (P1 · B18 · B15 · B14) ☐ (2–5 h)
 - **Change:** `records/training_run_record.py` — `make_epoch_record` gains a **`train_metrics=None`
