@@ -2,9 +2,9 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 9/12 steps done (S1–S9 ✅) — DAT1 complete, DAT3's JSON half in;
-suite green at 80 passed. Remaining: S10 (the CSV half, which clears the last 6 mypy errors), S11 (B16),
-S12 (docs/exit).
+**Status:** in progress · **Progress:** 10/12 steps done (S1–S10 ✅) — **DAT1 + DAT3 complete; pytest,
+ruff and mypy all clean** (83 passed, no mypy issues), the first fully-green state since the S1 re-pin.
+Remaining: S11 (B16 + the noise-bank id-agreement check), S12 (docs / version bump / phase exit).
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -433,7 +433,7 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   and the `config` docstring now states the repo-relative-path convention. The `run` object still
   allows extra keys, so a producer wanting `host` isn't blocked — it just isn't in the documented set.
 
-### S10 — DAT3b · `training_metrics` CSV train columns ☐ (1–2 h)
+### S10 — DAT3b · `training_metrics` CSV train columns ✅
 - **Change:** `records/training_metrics.py` — `_epoch_to_row` pulls the six well-known scalars from
   `EpochRecord.train_metrics` as well as `val_metrics` (dropping nested `confusion`, exactly as the val
   path does); `write_training_metrics` follows the schema's updated `x-csv-column-order`;
@@ -444,6 +444,23 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
 - **Depends on:** S9, and on egm-contracts' `training_metrics` column addition — **now scoped into P1 +
   CON3 for v0.6.0** (design note 5, CL-037 item 1), so this arrives with the same tag as everything
   else and is no longer conditional.
+- **Result:** ✅ 3 new tests; suite **83 passed / 0 failed**; ruff clean; **mypy fully clean — "no
+  issues found in 19 source files"**. That closes the last of the 33 errors the v0.6.0 re-pin
+  introduced at S1, and the repo is green on all three checks for the first time in the wave.
+- **Smaller than estimated, because the design was already schema-driven.** Serialization and read
+  coercion both key off `csv_column_order("training_metrics")`, so the six new columns needed **no
+  change to the writer or the reader** — only the `EpochRecord` → row projection had to learn about
+  them. This is the payoff for having pulled column order from the contracts package instead of
+  hardcoding it, and worth noting in the effort roll-up as a case where prior structure ate the cost.
+- **Both splits go through one projection** (`_split_metrics(metrics, prefix)`) rather than two
+  hand-written blocks. Carrying train beside val exists to make divergence readable; projecting them
+  through different code is how the two quietly stop being comparable.
+- **A record with no `train_metrics` writes empty cells, not absent columns.** That is the
+  CLF5-migration shape — 1.2 adopted a wave before the emit — and the header has to stay stable across
+  that gap or a consumer plotting the file sees the schema change mid-phase.
+- **Column order verified against the raw header**, not the typed model, since the model cannot express
+  order. Confirmed the shipped order pairs the splits as CL-037 requested:
+  `epoch, lr, train_loss, train_auroc…train_ece, val_loss, val_auroc…val_ece, epoch_seconds`.
 
 ### S11 — B16 · `ArtifactId` role ↔ content consistency check ☐ (2–5 h)
 - **Also here — the `noise_bank` ↔ `noise_bank_run_record` id-agreement check** (found at S2; the
