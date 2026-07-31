@@ -42,6 +42,23 @@ lands at **1.2** — the "1.1" this entry previously claimed is already spoken f
 
 ## Phase 2 — multiclass severity
 
+### Move `synthetic_bank` `seed` from `simulations/` to a root attr
+
+`seed` is the master seed of a generation **run** — bank-scoped, like `generation_params` — but
+`synthetic_bank` 2.0 placed it as a required per-simulation column, so today it is duplicated
+identically across every row of `simulations/seed`. When egm-contracts moves it, egm-data's change is
+one column shifting from the `simulations/` reader/writer (`_SIMULATION_INT_COLUMNS`) to the root
+attrs — small and symmetric.
+
+Backlogged 2026-07-31 (Daniel) rather than fixed in 1.5: nothing reads `seed`, and the producer
+replicating one value across the rows round-trips correctly in the meantime. Worth doing before many
+banks exist, because the duplication is *ambiguous* (a reader cannot tell "one master seed,
+replicated" from "simulations that happened to share a seed"), and because per-simulation seeding
+arriving later would silently reinterpret the same column.
+
+> Cross-repo: egm-contracts owns the schema move, synthetic-egm-pipeline writes it once. Raised as
+> coordination-log CL-096; best batched with the Phase-2 codegen-asymmetry fix below.
+
 ### Retire the local config-model unwrap helpers
 
 `tests/test_synthetic_bank_2_0.py` carries `_unwrap` / `_type_name` helpers that paper over an

@@ -56,56 +56,102 @@ def test_synthetic_bank_validates(synthetic_bank_path: Path) -> None:
 
 
 def test_synthetic_bank_to_classifier(synthetic_bank_path: Path, n_samples: int) -> None:
-    """Read a synthetic bank into a Pydantic model, convert to
-    ClassifierBank with a binary fibrotic-vs-healthy label_fn that
-    returns (labels_array, labels_dict), and confirm the shape +
-    provenance + label propagation."""
+    """Convert a 2.0 bank and confirm shape, provenance, and that labels
+    come from the bank itself with no label_fn supplied."""
+    pyd_bank = read_synthetic_bank_hdf5(synthetic_bank_path)
+
+    cb = synthetic_bank_to_classifier(pyd_bank, bank_path=synthetic_bank_path)
+
+    assert isinstance(cb, ClassifierBank)
+    assert cb.n_traces == 6  # 2 simulations x 3 bipolar pairs
+    assert cb.n_samples_first == n_samples
+    # Names come from the per-simulation label_names map, merged bank-wide.
+    assert cb.labels == {0: "healthy", 1: "fibrotic"}
+    # Simulation 0 healthy, simulation 1 fibrotic.
+    assert cb.label_truth_array().tolist() == [0, 0, 0, 1, 1, 1]
+    assert len(cb.banks) == 1
+    assert cb.banks[0].bank_type == "synthetic"
+    # The label-policy identity is the one generation-derived fact kept
+    # bank-side: it says what the task is.
+    assert cb.banks[0].bank_metadata["label_policy"] == "global_density"
+    # patient_id propagated as a string in trace_metadata for the splitter.
+    assert all("patient_id" in t.trace_metadata for t in cb.traces)
+
+
+def test_synthetic_label_fn_overrides_the_banks_labels(synthetic_bank_path: Path) -> None:
+    """A supplied label_fn still wins — it is a re-labeling override.
+
+    The 2.0 bank carries its own labels, so label_fn's role narrowed
+    from "the only way to get labels" to "deliberately relabel this
+    bank". Here a 2-class bank is collapsed to a single class, which the
+    bank's own labels would never produce.
+    """
     pyd_bank = read_synthetic_bank_hdf5(synthetic_bank_path)
 
     def label_fn(b: object) -> tuple[np.ndarray, dict[int, str]]:
-        densities = np.asarray(pyd_bank.traces.fibrosis_density)
-        return (densities > 0.0).astype(np.int64), {0: "healthy", 1: "fibrotic"}
+        return np.zeros(6, dtype=np.int64), {0: "all_one_class"}
 
-    cb = synthetic_bank_to_classifier(
-        pyd_bank,
-        label_fn=label_fn,
-        bank_path=synthetic_bank_path,
-    )
-    assert isinstance(cb, ClassifierBank)
-    assert cb.n_traces == 6  # 2 patients x 3 traces
-    assert cb.n_samples_first == n_samples
-    assert cb.labels == {0: "healthy", 1: "fibrotic"}
-    # Patient 0 healthy, patient 1 fibrotic — labels propagated.
-    labels = cb.label_truth_array()
-    assert labels.tolist() == [0, 0, 0, 1, 1, 1]
-    # Source-bank provenance reaches bank_metadata.
-    assert len(cb.banks) == 1
-    assert cb.banks[0].bank_type == "synthetic"
-    assert cb.banks[0].bank_metadata["simulator"] == "finitewave"
-    # patient_id propagated as a string in trace_metadata for the splitter.
-    assert all("patient_id" in t.trace_metadata for t in cb.traces)
+    cb = synthetic_bank_to_classifier(pyd_bank, label_fn=label_fn, bank_path=synthetic_bank_path)
+    assert cb.label_truth_array().tolist() == [0] * 6
+    assert cb.labels == {0: "all_one_class"}
 
 
 def test_load_synthetic_as_classifier_shortcut(synthetic_bank_path: Path) -> None:
     """The convenience function should chain read + convert and produce
     the same result as the two-step path."""
-    cb = load_synthetic_bank_as_classifier(
-        synthetic_bank_path,
-        label_fn=lambda b: (
-            np.asarray([int(d > 0.0) for d in b.traces.fibrosis_density], dtype=np.int64),
-            {0: "healthy", 1: "fibrotic"},
-        ),
-    )
+    cb = load_synthetic_bank_as_classifier(synthetic_bank_path)
     assert cb.n_traces == 6
     assert cb.banks[0].bank_type == "synthetic"
+    assert cb.label_truth_array().tolist() == [0, 0, 0, 1, 1, 1]
 
 
-def test_load_synthetic_without_label_fn(synthetic_bank_path: Path) -> None:
-    """Omitting label_fn entirely leaves every trace's label_truth=None
-    and an empty labels dict — the pretraining / inference-time mode."""
-    cb = load_synthetic_bank_as_classifier(synthetic_bank_path)
+def test_synthetic_label_fn_returning_none_means_unlabeled(synthetic_bank_path: Path) -> None:
+    """label_fn returning None is how you now ask for an unlabeled bank.
+
+    Under 1.1, *omitting* label_fn produced an unlabeled bank. Under 2.0
+    omitting it takes the bank's own labels, so the explicit "treat this
+    as unlabeled" request has to be a label_fn that returns None — the
+    pretraining / inference path.
+    """
+    cb = load_synthetic_bank_as_classifier(synthetic_bank_path, label_fn=lambda b: None)
     assert all(t.label_truth is None for t in cb.traces)
     assert cb.labels == {}
+
+
+def test_no_generation_config_reaches_trace_metadata(synthetic_bank_path: Path) -> None:
+    """The ClassifierBank stays source-agnostic: no theta, no config.
+
+    The five columns a 1.1 bank flattened onto every trace are dropped
+    rather than relocated — they are per-simulation facts reachable
+    through simulation_id. The converter's job is flattening traces/
+    columns, so this is exactly where generation detail would creep back
+    in (section 12 of synthetic_bank_source_of_truth.md).
+    """
+    cb = load_synthetic_bank_as_classifier(synthetic_bank_path)
+
+    forbidden = {
+        "fibrosis_density",
+        "fibrosis_density_realized",
+        "electrode_row",
+        "electrode_height_mm",
+        "stim_edge",
+        "seed",
+        "geometry",
+        "cell_model",
+        "substrate",
+        "activation",
+        "electrodes",
+        "backend",
+        "generation_params",
+        "activation_position",
+    }
+    for trace in cb.traces:
+        leaked = forbidden & set(trace.trace_metadata)
+        assert not leaked, f"generation detail leaked into trace_metadata: {sorted(leaked)}"
+
+    # What must be there: the grouping key and the join key.
+    for trace in cb.traces:
+        assert set(trace.trace_metadata) >= {"patient_id", "simulation_id", "pair_index"}
 
 
 # ---------------------------------------------------------------------------
@@ -227,13 +273,8 @@ def test_classifier_bank_concat_preserves_stable_bank_ids(
     """Merging two ClassifierBanks keeps each source bank's stable bank_id
     (no integer remap); every trace's bank_id still points at its source
     entry by that stable id."""
-    syn = load_synthetic_bank_as_classifier(
-        synthetic_bank_path,
-        label_fn=lambda b: (
-            (np.asarray(b.traces.fibrosis_density) > 0.0).astype(np.int64),
-            {0: "healthy", 1: "fibrotic"},
-        ),
-    )
+    # No label_fn: the 2.0 bank carries its own labels and names.
+    syn = load_synthetic_bank_as_classifier(synthetic_bank_path)
     iaf = load_iafdb_bank_as_classifier(
         iafdb_bank_path,
         label_fn=lambda b: (
@@ -263,13 +304,8 @@ def test_classifier_bank_concat_rejects_label_mismatch(
     bank, or concat is a bug"."""
     import pytest
 
-    syn = load_synthetic_bank_as_classifier(
-        synthetic_bank_path,
-        label_fn=lambda b: (
-            (np.asarray(b.traces.fibrosis_density) > 0.0).astype(np.int64),
-            {0: "healthy", 1: "fibrotic"},
-        ),
-    )
+    # No label_fn: the 2.0 bank carries its own labels and names.
+    syn = load_synthetic_bank_as_classifier(synthetic_bank_path)
     iaf = load_iafdb_bank_as_classifier(
         iafdb_bank_path,
         label_fn=lambda b: (

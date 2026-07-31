@@ -352,6 +352,71 @@ def test_writer_refuses_an_orphan_trace(
         write_synthetic_bank(bank, tmp_path / "orphan.h5")
 
 
+# ---------------------------------------------------------------------------
+# Converter (S7) — the join key must stay reachable
+# ---------------------------------------------------------------------------
+
+
+def test_join_key_reaches_a_prediction_row(tmp_path: Path, synthetic_bank_path: Path) -> None:
+    """simulation_id survives all the way to a written predictions bank.
+
+    This is the guarantee section 12 asks the phase to make: the
+    FN-vs-theta correlation (predictions join ClassifierBank join
+    synthetic_bank) is deferred, but it is only *possible later* if the
+    key is still on a prediction row now. Checking it end-to-end —
+    convert, attach predictions, write, read back — is the only way to
+    catch the key being dropped by the ClassifierBank serializer rather
+    than by the converter.
+    """
+    from myocard_egm_data.banks import (
+        ClassifierPrediction,
+        load_classifier_bank,
+        load_synthetic_bank_as_classifier,
+        write_classifier_bank,
+    )
+
+    cb = load_synthetic_bank_as_classifier(synthetic_bank_path)
+    for trace in cb.traces:
+        trace.split = "test"
+        trace.prediction = ClassifierPrediction(
+            label_pred=1, label_prob=0.9, pred_logits={0: -1.0, 1: 1.0}
+        )
+
+    path = write_classifier_bank(cb, tmp_path / "upred_bank.classifier.h5")
+    reloaded = load_classifier_bank(path)
+
+    for trace in reloaded.traces:
+        assert trace.prediction is not None
+        # The join key, still attached to the row carrying the prediction.
+        assert trace.trace_metadata["simulation_id"] in (0, 1)
+        assert "pair_index" in trace.trace_metadata
+
+    # And the source bank id is preserved, so the joined synthetic_bank
+    # can be located rather than guessed.
+    assert reloaded.banks[0].bank_id == cb.banks[0].bank_id
+
+
+def test_write_classifier_bank_rejects_the_sim_id_spelling(
+    tmp_path: Path, synthetic_bank_path: Path
+) -> None:
+    """A bank keyed `sim_id` instead of `simulation_id` is refused.
+
+    The ClassifierBank is numpy-backed with no JSON Schema, so contracts
+    cannot pin the key's name (CL-012) — the writer is the only place it
+    can be enforced. It is worth enforcing because the two producer
+    paths genuinely disagreed once (CL-008), and a join key with two
+    spellings passes every unit test and then fails on real artifacts.
+    """
+    from myocard_egm_data.banks import load_synthetic_bank_as_classifier, write_classifier_bank
+
+    cb = load_synthetic_bank_as_classifier(synthetic_bank_path)
+    for trace in cb.traces:
+        trace.trace_metadata["sim_id"] = trace.trace_metadata.pop("simulation_id")
+
+    with pytest.raises(ValueError, match="simulation_id"):
+        write_classifier_bank(cb, tmp_path / "wrong_key.classifier.h5")
+
+
 def test_theta_spec_survives_byte_for_byte(synthetic_bank_2_0_raw_path: Path) -> None:
     """The theta-spec decodes to exactly what was written.
 

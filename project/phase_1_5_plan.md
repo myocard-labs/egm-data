@@ -2,9 +2,9 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 6/12 steps done (S1–S6 ✅) — reader + writer are in and the
-fixture is 2.0-shaped; the red window is down to the **converter** (6 failures, 17 mypy errors, all in
-`converters.py`) and closes at S7.
+**Status:** in progress · **Progress:** 7/12 steps done (S1–S7 ✅) — **DAT1's core is complete and the
+suite is green (67 passed)**; the declared red window closed at S7 as planned. Remaining: S8 (T4 join),
+S9–S10 (DAT3, which owns the last 6 mypy errors), S11 (B16), S12 (docs/exit).
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -311,7 +311,7 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   refused at the write call, with the offending ids and the known set in the message. Wired ahead of
   the file being opened, so a rejected bank leaves no partial file behind.
 
-### S7 — DAT1c · θ-free `synthetic_bank_to_classifier` ☐ (2–4 h)
+### S7 — DAT1c · θ-free `synthetic_bank_to_classifier` ✅
 - **Change:** `banks/converters.py` — take `label_truth` from the bank's int `label` and
   `ClassifierBank.labels` from `label_names` (per design note 2, `label_fn` demotes to an override);
   record the `LabelPolicy` **identity** in `bank_metadata` (design note 8 — a string, not a typed
@@ -341,6 +341,26 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
 - **Note:** this step got *smaller* under the 2026-07-28 correction — dropping fields is less work than
   joining them. The estimate holds because the `LabelPolicy` id, the key-guarantee test, and the writer
   check replace it.
+- **Result:** ✅ **67 passed, 0 failed** — the suite is fully green for the first time since S1. ruff
+  clean. **mypy 23 → 6**, `converters.py` now clean; the 6 left are `training_metrics.py` (S10).
+  **The declared red window is closed**, one step later than S1 predicted and on the step it named.
+- **Conversion cost** (design note 4, closed): on a realistic bank — **2000 traces / 25 simulations at
+  T = 192 ms** — write **0.12 s**, read + convert **0.09 s**. No vectorized-join work needed; the naive
+  per-trace path is nowhere near mattering, and egm-studio's table view reads the typed `SyntheticBank`
+  directly anyway.
+- **`label_fn` semantics inverted, deliberately.** Under 1.1, *omitting* `label_fn` produced an
+  unlabeled bank. Under 2.0 omitting it takes the bank's own labels — the normal path — and asking for
+  an unlabeled bank means passing a `label_fn` that returns `None`. Both spellings are tested so the
+  inversion is pinned rather than implied. **egm-classifier / egm-studio see this** (already routed as
+  CL-038).
+- **Deviation from the plan text:** `seed` is *not* kept in `trace_metadata`. The plan listed it with
+  the noise-mixing provenance, but 2.0 moved `seed` into `simulations/`, so keeping it per-trace would
+  have been exactly the leak this step exists to prevent. `snr_db` / `noise_record` / `noise_channel`
+  stay, per Daniel's 2026-07-29 call. **Follow-up (Daniel, 2026-07-31):** dropping it was right, but my
+  reason was wrong — `seed` is the master seed of a generation *run*, i.e. bank-scoped, not
+  per-simulation. 2.0 put it in the wrong group. Interim: the producer replicates the same master seed
+  into every `simulations/seed` row; moving it to a root attr is backlogged via **CL-096**. No egm-data
+  change this phase — we round-trip the column without interpreting it.
 
 ### S8 — DAT1d · bank ⋈ bank joined view (T4) ☐ (2–4 h)
 - **Change:** new read-time joined view in `banks/` — given a synthetic-sourced ClassifierBank plus its

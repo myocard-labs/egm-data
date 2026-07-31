@@ -55,23 +55,30 @@ emitted label ints.
 """
 
 SyntheticLabelFn = Callable[[_synthetic_bank_models.SyntheticBank], LabelResult | None]
-"""Label function for synthetic banks.
+"""Optional **re-labeling override** for synthetic banks.
 
-Receives the Pydantic SyntheticBank, returns either:
+Since ``synthetic_bank`` 2.0 the bank carries its own labels — a plain
+int per trace plus a per-simulation ``label_names`` map — so the
+converter no longer needs a label function and **omitting this is the
+normal path**. Supply one only to deliberately re-label an existing
+bank (e.g. collapsing a multiclass severity bank to binary for a
+comparison run).
+
+Returns either:
 
 - ``(labels_array, labels_dict)`` — one integer label per trace plus the
-  int-to-human-string translation.
-- ``None`` — every ``label_truth`` set to ``None`` and ``labels`` dict
-  left empty. Useful for converting an unlabeled bank for pretraining /
-  inference-time use.
+  int-to-human-string translation. Both **replace** what the bank
+  carries.
+- ``None`` — every ``label_truth`` set to ``None`` and ``labels`` left
+  empty, i.e. "treat this bank as unlabeled" (pretraining / inference).
+  Note this is *not* the same as passing no ``label_fn`` at all, which
+  now means "use the bank's own labels".
 
-Example: binary fibrotic-vs-healthy from fibrosis_density::
+Example — collapse a 3-class severity bank to fibrotic-vs-healthy::
 
     def label_fn(bank: SyntheticBank) -> tuple[np.ndarray, dict[int, str]]:
-        labels = (
-            np.asarray(bank.traces.fibrosis_density) > 0.0
-        ).astype(np.int64)
-        return labels, {0: "healthy", 1: "fibrotic"}
+        raw = np.asarray([int(getattr(x, "root", x)) for x in bank.traces.label])
+        return (raw > 0).astype(np.int64), {0: "healthy", 1: "fibrotic"}
 """
 
 IAFDBLabelFn = Callable[[_iafdb_bank_models.IafdbBank], LabelResult | None]
@@ -91,16 +98,28 @@ def synthetic_bank_to_classifier(
 ) -> ClassifierBank:
     """Convert a Pydantic SyntheticBank into a ClassifierBank.
 
+    The ClassifierBank is a **source-agnostic ML compression**: signal,
+    label, and the keys needed to join back to where the trace came
+    from. Generation parameters — theta, the per-simulation config — are
+    the raw material of the signal-realism / parameter-estimation work,
+    not of classification, so they stay on the ``synthetic_bank`` and
+    consumers read them from there. The two banks are **parallel
+    artifacts sharing a key**, not one derived from the other; see
+    ``intracardiac-platform/project/investigations/synthetic_bank_source_of_truth.md``
+    section 12.
+
+    Concretely, the columns a 1.1 bank flattened into every trace
+    (``fibrosis_density``, ``electrode_row``, ``stim_edge``, ...) are
+    **dropped rather than relocated** — they are per-simulation facts,
+    reachable through ``simulation_id``.
+
     Parameters
     ----------
     pyd_bank
         The Pydantic-model view of the on-disk synthetic bank.
     label_fn
-        Optional. Either returns ``(labels_array, labels_dict)`` or
-        ``None``. If the whole ``label_fn`` is ``None`` (or it returns
-        ``None``) the bank is built with every ``label_truth`` set to
-        ``None`` and an empty labels dict — useful for pretraining /
-        inference-time use on unlabeled data.
+        Optional **re-labeling override**; see :data:`SyntheticLabelFn`.
+        Omit it to use the bank's own labels, which is the normal path.
     bank_path
         Provenance only; recorded in
         :attr:`ClassifierBankMetaData.bank_path`.
@@ -111,7 +130,6 @@ def synthetic_bank_to_classifier(
     per source-bank row.
     """
     n = len(pyd_bank.traces.signal)
-    labels_arr, labels_dict = _run_label_fn(label_fn, pyd_bank, n)
 
     # The source bank's stable id becomes the ClassifierBankMetaData /
     # ClassifierTrace bank_id (egm-contracts v0.5.0). Required — a bank
@@ -124,22 +142,24 @@ def synthetic_bank_to_classifier(
         )
     source_id = pyd_bank.bank_id
 
+    labels_arr: np.ndarray | None
+    if label_fn is None:
+        labels_arr, labels_dict = _labels_from_bank(pyd_bank, n)
+    else:
+        labels_arr, labels_dict = _run_label_fn(label_fn, pyd_bank, n)
+
     bank_metadata: dict[str, Any] = {
         "schema_version": _enum_or_str(pyd_bank.schema_version),
         "created_utc": _datetime_to_str(pyd_bank.created_utc),
         "description": pyd_bank.description,
         "trace_duration_ms": pyd_bank.trace_duration_ms,
-        "simulator": pyd_bank.simulator,
-        "cell_model": pyd_bank.cell_model,
-        "patch_size_mm": pyd_bank.patch_size_mm,
-        "patch_dr_mm": pyd_bank.patch_dr_mm,
-        "ap_time_unit_ms": pyd_bank.ap_time_unit_ms,
-        "fibrosis_strategy_name": pyd_bank.fibrosis_strategy_name,
-        "fibrosis_params": pyd_bank.fibrosis_params,
-        "electrode_config": pyd_bank.electrode_config,
-        "mixer_config": pyd_bank.mixer_config,
-        "experiment_config": pyd_bank.experiment_config,
         "noise_bank_source": pyd_bank.noise_bank_source,
+        # The label-policy *identity* is the one generation-derived fact
+        # that belongs here: it defines what the classification task is,
+        # which is the ClassifierBank's whole subject. A plain string,
+        # deliberately not the typed object — the policy's parameters are
+        # generation detail and live on the synthetic_bank.
+        "label_policy": _label_policy_identity(pyd_bank),
     }
     source_meta = ClassifierBankMetaData(
         bank_id=source_id,
@@ -153,18 +173,21 @@ def synthetic_bank_to_classifier(
     fs_hz = _enum_or_float(pyd_bank.fs_hz)
     for i in range(n):
         trace_metadata: dict[str, Any] = {
-            "patient_id": str(t.simulation_id[i]),
-            "simulation_id": int(t.simulation_id[i]),
-            "pair_index": int(t.pair_index[i]),
-            "electrode_row": int(t.electrode_row[i]),
-            "fibrosis_density": float(t.fibrosis_density[i]),
-            "fibrosis_density_realized": float(t.fibrosis_density_realized[i]),
-            "electrode_height_mm": float(t.electrode_height_mm[i]),
-            "seed": int(t.seed[i]),
-            "snr_db": float(t.snr_db[i]),
-            "stim_edge": str(t.stim_edge[i]),
-            "noise_record": str(t.noise_record[i]),
-            "noise_channel": str(t.noise_channel[i]),
+            # patient_id is the grouping key egm-classifier's
+            # patient-aware split reads; one simulation is one "patient".
+            "patient_id": str(_unwrap(t.simulation_id[i])),
+            # The join key back to the synthetic_bank's per-simulation
+            # config (and, with pair_index, to the realized electrode
+            # pair). This is what keeps theta reachable without copying
+            # it onto the ML artifact.
+            "simulation_id": int(_unwrap(t.simulation_id[i])),
+            "pair_index": int(_unwrap(t.pair_index[i])),
+            # Noise-mixing provenance: which real recording this trace's
+            # noise came from, and at what SNR. Kept for now, though it
+            # is reachable through the same join — see roadmap.md.
+            "snr_db": float(_unwrap(t.snr_db[i])),
+            "noise_record": str(_unwrap(t.noise_record[i])),
+            "noise_channel": str(_unwrap(t.noise_channel[i])),
         }
         traces.append(
             ClassifierTrace(
@@ -310,6 +333,65 @@ def load_iafdb_bank_as_classifier(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _labels_from_bank(
+    pyd_bank: _synthetic_bank_models.SyntheticBank,
+    n: int,
+) -> tuple[np.ndarray, dict[int, str]]:
+    """Take labels from the bank itself — the 2.0 default path.
+
+    ``traces.label`` is a plain int per trace; the ``{int: name}`` map
+    lives per simulation, alongside the policy that produced it. The
+    names are merged across simulations because ``ClassifierBank.labels``
+    is bank-wide: every simulation in one bank is expected to share a
+    label vocabulary, and a bank where two simulations disagree about
+    what class ``1`` means is malformed in a way worth failing on rather
+    than silently resolving to whichever came last.
+    """
+    labels = np.asarray([int(_unwrap(x)) for x in pyd_bank.traces.label], dtype=np.int64)
+    if labels.shape != (n,):  # pragma: no cover — schema keeps these aligned
+        raise ValueError(
+            f"Bank carries {labels.shape[0]} labels for {n} traces; "
+            "traces/label must have one entry per trace."
+        )
+
+    merged: dict[int, str] = {}
+    for sim_index, name_map in enumerate(pyd_bank.simulations.label_names):
+        for raw_key, raw_name in dict(name_map).items():
+            key, name = int(raw_key), str(raw_name)
+            existing = merged.get(key)
+            if existing is not None and existing != name:
+                raise ValueError(
+                    f"Simulations disagree on the name for label {key}: "
+                    f"{existing!r} vs {name!r} (simulation index {sim_index}). "
+                    "All simulations in one bank must share a label vocabulary."
+                )
+            merged[key] = name
+    return labels, merged
+
+
+def _label_policy_identity(pyd_bank: _synthetic_bank_models.SyntheticBank) -> str | None:
+    """Summarize the per-simulation label policies as one identifier.
+
+    Returns the policy ``type`` when every simulation agrees (the normal
+    case), a sorted ``"a+b"`` join when they don't, and ``None`` when
+    there are no simulations. Only the discriminator is carried — the
+    policy's thresholds are generation detail and stay on the source
+    bank.
+    """
+    types = sorted(
+        {
+            str(
+                getattr(getattr(_unwrap(policy), "type", None), "value", None)
+                or getattr(_unwrap(policy), "type", "")
+            )
+            for policy in pyd_bank.simulations.label_policy
+        }
+    )
+    if not types:
+        return None
+    return "+".join(types)
 
 
 def _run_label_fn(

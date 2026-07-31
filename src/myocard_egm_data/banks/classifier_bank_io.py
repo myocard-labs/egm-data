@@ -84,6 +84,8 @@ def write_classifier_bank(
         raise FileExistsError(f"{path} exists; pass overwrite=True.")
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    _check_join_key_name(bank)
+
     # Validate uniform trace length up front.
     if bank.traces:
         T = bank.traces[0].signal.shape[0]
@@ -102,6 +104,32 @@ def write_classifier_bank(
         _write_banks_group(f, bank.banks)
         _write_traces_group(f, bank.traces, T)
     return path
+
+
+#: The one spelling of the synthetic join key. A ClassifierBank is
+#: numpy-backed with no JSON Schema, so contracts cannot pin this
+#: (CL-012) — the writer is the only place the convention can be
+#: enforced, and it is worth enforcing because the two producer paths
+#: disagreed once already (CL-008): egm-data's converter wrote
+#: ``simulation_id`` while the pipeline's direct writer wrote ``sim_id``.
+#: One artifact type with two names for its join key passes every unit
+#: test and then fails once, on real artifacts, at join time.
+_JOIN_KEY = "simulation_id"
+_JOIN_KEY_ALIASES = ("sim_id",)
+
+
+def _check_join_key_name(bank: ClassifierBank) -> None:
+    """Refuse a bank whose traces spell the synthetic join key wrongly."""
+    for index, trace in enumerate(bank.traces):
+        for alias in _JOIN_KEY_ALIASES:
+            if alias in trace.trace_metadata and _JOIN_KEY not in trace.trace_metadata:
+                raise ValueError(
+                    f"ClassifierBank trace {index} carries "
+                    f"trace_metadata[{alias!r}]; the synthetic join key must "
+                    f"be spelled {_JOIN_KEY!r}. Both producer paths agree on "
+                    "that name since Phase 1.5 — rename it at the source "
+                    "rather than teaching consumers two spellings."
+                )
 
 
 def _write_root_attrs(f: h5py.File, bank: ClassifierBank) -> None:
