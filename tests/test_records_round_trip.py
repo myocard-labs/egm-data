@@ -236,6 +236,7 @@ def test_held_out_test_reliability_is_coerced_like_val(tmp_path: Path) -> None:
         },
     )
     assert record.test is not None
+    assert record.test.reliability is not None
     assert isinstance(record.test.reliability[0], ReliabilityBin)
     assert record.test.reliability[0].count == 20
 

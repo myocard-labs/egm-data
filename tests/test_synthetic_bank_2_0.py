@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import h5py
 import pytest
@@ -27,7 +28,7 @@ from conftest import (
 from myocard_egm_data.banks import read_synthetic_bank_hdf5, write_synthetic_bank
 
 
-def _unwrap(value: object) -> object:
+def _unwrap(value: Any) -> Any:
     """Unwrap a codegen ``RootModel`` container, if this value is one.
 
     The generated models are **inconsistent** about this, and the
@@ -46,7 +47,7 @@ def _unwrap(value: object) -> object:
     return getattr(value, "root", value)
 
 
-def _type_name(value: object) -> str:
+def _type_name(value: Any) -> str:
     """Return a config object's discriminator as a plain string.
 
     Second asymmetry in the same family as ``_unwrap``: a variant that

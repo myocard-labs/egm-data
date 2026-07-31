@@ -9,6 +9,7 @@ importantly, the three ways it can silently produce the *wrong* answer.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -22,7 +23,7 @@ from myocard_egm_data.banks import (
 )
 
 
-def _unwrap(value: object) -> object:
+def _unwrap(value: Any) -> Any:
     return getattr(value, "root", value)
 
 

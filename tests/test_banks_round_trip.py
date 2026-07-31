@@ -15,6 +15,7 @@ itself (the egm-data-owned intermediate).
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -41,6 +42,12 @@ from myocard_egm_data.banks import (
     write_classifier_bank,
     write_noise_bank,
 )
+
+
+def _unwrap(value: Any) -> Any:
+    """Unwrap a codegen constraint-root container (``.root`` accessor)."""
+    return getattr(value, "root", value)
+
 
 # ---------------------------------------------------------------------------
 # Synthetic bank
@@ -195,7 +202,7 @@ def test_iafdb_bank_optionals_round_trip(iafdb_bank_with_optionals_path: Path) -
     assert pyd_bank.traces.activation_position is not None
     # Codegen wraps constrained numerics in a container with a .root
     # accessor; unwrap before comparing.
-    positions = [float(getattr(x, "root", x)) for x in pyd_bank.traces.activation_position]
+    positions = [float(_unwrap(x)) for x in pyd_bank.traces.activation_position]
     assert positions == pytest.approx([0.0, 0.25, 0.5, 1.0])
 
 

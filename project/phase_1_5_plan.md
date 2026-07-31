@@ -519,7 +519,8 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   renumbering, the Phase-2 removal, and the deferred correlation-join + noise-provenance entries are
   already in). Version bump to **v0.6.0** per design note 1.
 - **Verify:** ✅ full pre-PR run green — `ruff format src tests` (no changes), `ruff check` clean,
-  `ruff format --check` clean, `mypy src` clean, **98 passed**. Version bumped to **0.6.0**, pin at
+  `ruff format --check` clean, **`mypy` (bare) clean over 30 files**, **98 passed**. Version bumped to
+  **0.6.0**, pin at
   `egm-contracts@v0.6.0`, CHANGELOG 0.6.0 entry written, roadmap trimmed to future-only, plan statuses
   current.
 - **Depends on:** all prior steps.
@@ -530,6 +531,18 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   new section on reading θ from the typed `SyntheticBank` and joining the two banks.
   `classifier_bank_format.md` gained the join-key convention, the role↔content table, and a "what is
   deliberately not here" note on generation parameters.
+> **Mistake worth recording: I type-checked `src` only, for the whole wave.** Every step I ran
+> `mypy src` — which is literally what `pr_checklist.md` §1 says — and reported it clean. **CI runs
+> bare `mypy`**, and this repo's `pyproject.toml` sets `files = ["src", "tests"]`, so the test code I
+> wrote at every step was never checked. Daniel's local CI run caught **21 errors across 5 test
+> files**. Fixed: 18 of them were my `_unwrap` / `_type_name` test helpers annotated `-> object`
+> (mypy then can't attribute-access the result) where `src/` correctly uses `Any` for the same
+> codegen-unwrapping idiom; the rest were a bare `dict` under `strict`, a `list | None` index, and one
+> `getattr` on a constrained scalar. **The lesson isn't "run mypy on tests" — it's that I trusted the
+> checklist's wording over the repo's own config.** The two disagree, and the config is what CI obeys.
+> → raised as **CL-098** so the checklist line gets fixed fleet-wide rather than each repo
+> rediscovering it.
+
 - **Repo-hygiene find: `.gitignore` had the unanchored-`data/` landmine.** The checklist's guard box
   caught it — `data/` matched at any depth, so `git check-ignore` confirmed it *would* silently swallow
   a `src/myocard_egm_data/data/` package. Nothing is broken today (that package moved to egm-classifier

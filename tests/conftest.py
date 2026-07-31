@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
@@ -167,7 +168,7 @@ def build_synthetic_bank_2_0_model(
     """
     rng = np.random.default_rng(0)
     n = 6
-    doc: dict = {
+    doc: dict[str, Any] = {
         "schema_version": current_version("synthetic_bank"),
         "created_utc": _now_iso(),
         "bank_id": SYNTHETIC_BANK_ID,
