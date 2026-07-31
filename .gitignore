@@ -70,13 +70,19 @@ coverage.xml
 *.ckpt
 *.safetensors
 
-data/
-checkpoints/
-runs/
-logs/
-mlruns/
-wandb/
-artifacts/
+# Root-anchored (leading slash) on purpose. These are repo-root output
+# directories, but an unanchored `data/` matches at ANY depth — including
+# a source package such as src/myocard_egm_data/data/, which git would
+# then silently refuse to track. That exact trap cost egm-classifier a
+# red CI at Refactor Step 8 (green locally, ModuleNotFoundError in CI).
+# Anchoring keeps the intended behaviour and removes the landmine.
+/data/
+/checkpoints/
+/runs/
+/logs/
+/mlruns/
+/wandb/
+/artifacts/
 
 # Allow tiny fixtures committed under tests/fixtures/ if needed:
 !tests/fixtures/**
