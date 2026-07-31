@@ -138,6 +138,8 @@ def read_iafdb_bank_hdf5(path: Path | str) -> _iafdb_bank_models.IafdbBank:
             "schema_version": _str_attr(f, "schema_version", required=True, path=path),
             "created_utc": _str_attr(f, "created_utc", required=True, path=path),
             "bank_id": _opt_str_attr(f, "bank_id"),
+            # iafdb_bank 1.3 (B11): absence means "no sidecar", not an error.
+            "run_record_path": _opt_str_attr(f, "run_record_path"),
             "source": _str_attr(f, "source", required=True, path=path),
             "fs_hz": _float_attr(f, "fs_hz", required=True, path=path),
             "trace_duration_ms": _float_attr(f, "trace_duration_ms", required=True, path=path),
@@ -168,6 +170,13 @@ def read_iafdb_bank_hdf5(path: Path | str) -> _iafdb_bank_models.IafdbBank:
             "peak_to_peak_mv": [float(x) for x in g["peak_to_peak_mv"][...]],
             "calibration_scalar": [float(x) for x in g["calibration_scalar"][...]],
         }
+        # iafdb_bank 1.3: optional and permanently so — present only on
+        # activation-split banks. Left unset (not zero-filled) when absent,
+        # because the schema requires readers to treat absence as "unknown
+        # position"; a zeroed column would read as "every activation sits at
+        # the very start of its window".
+        if "activation_position" in g:
+            doc["traces"]["activation_position"] = [float(x) for x in g["activation_position"][...]]
 
     return _iafdb_bank_models.IafdbBank.model_validate(doc)
 

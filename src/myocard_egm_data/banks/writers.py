@@ -250,6 +250,16 @@ def write_iafdb_bank(
     calibration_scalar_arr = np.asarray(
         [float(_unwrap(x)) for x in t.calibration_scalar], dtype=np.float32
     )
+    # iafdb_bank 1.3, optional and permanently so: only an activation-aware
+    # split produces a position. Sliding-window banks have no anchor and
+    # multi-beat traces have no single position, so the column is omitted
+    # rather than filled with a sentinel — absence means "unknown", and a
+    # zero would read as "activation at the very start of the window".
+    activation_position_arr = (
+        np.asarray([float(_unwrap(x)) for x in t.activation_position], dtype=np.float32)
+        if t.activation_position is not None
+        else None
+    )
 
     created_utc = _dt.datetime.now(_dt.timezone.utc).isoformat()
 
@@ -274,6 +284,12 @@ def write_iafdb_bank(
         f.attrs["window_ms"] = float(bank.window_ms)
         f.attrs["window_samples"] = window_samples
         f.attrs["hop_ms"] = float(bank.hop_ms if bank.hop_ms is not None else 0.0)
+        # iafdb_bank 1.3 (B11): optional pointer to the sibling audit-report
+        # JSON, relative to the bank's own directory. A bank written without
+        # the report simply omits the attr — the reader treats absence as
+        # "no sidecar", never as an error.
+        if bank.run_record_path is not None:
+            f.attrs["run_record_path"] = bank.run_record_path
         f.attrs.create(
             "source_records",
             np.asarray([str(s) for s in bank.source_records], dtype=object),
@@ -288,4 +304,8 @@ def write_iafdb_bank(
         traces.create_dataset("start_sample", data=start_sample_arr, dtype=np.int64)
         traces.create_dataset("peak_to_peak_mv", data=peak_to_peak_arr, dtype=np.float32)
         traces.create_dataset("calibration_scalar", data=calibration_scalar_arr, dtype=np.float32)
+        if activation_position_arr is not None:
+            traces.create_dataset(
+                "activation_position", data=activation_position_arr, dtype=np.float32
+            )
     return path

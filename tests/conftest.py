@@ -104,8 +104,14 @@ def synthetic_bank_path(
 def iafdb_bank_path(tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_samples: int) -> Path:
     """Build a tiny Pydantic IafdbBank and write it to HDF5.
 
-    Two patients x two segments. The bank schema (v0.1.2) carries no
-    label column — labeling happens at ClassifierBank conversion time.
+    Two patients x two segments. The bank schema (1.3) carries no label
+    column — labeling happens at ClassifierBank conversion time.
+
+    Deliberately omits both 1.3 optional fields (``run_record_path`` and
+    per-trace ``activation_position``), so this fixture is the shape a
+    Wave-1 sliding-window bank actually has and every test using it
+    exercises the absent path. See ``iafdb_bank_with_optionals_path``
+    for the populated counterpart.
     """
     rng = np.random.default_rng(1)
     n = 4
@@ -142,6 +148,59 @@ def iafdb_bank_path(tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_sa
         }
     )
     path = tmp_path / "iafdb_bank.h5"
+    write_iafdb_bank(pyd_bank, path)
+    return path
+
+
+@pytest.fixture
+def iafdb_bank_with_optionals_path(
+    tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_samples: int
+) -> Path:
+    """An IafdbBank carrying both iafdb_bank 1.3 optional fields.
+
+    The shape an activation-split bank has once IAF1 populates it in
+    Wave 2: a ``run_record_path`` pointer to the sibling audit report
+    (B11) and a per-trace ``activation_position`` fraction (CL-053).
+    Positions are deliberately spread across [0, 1] — including the
+    endpoints — so a reader that clamps, rounds, or drops the column
+    fails loudly.
+    """
+    rng = np.random.default_rng(3)
+    n = 4
+    signal = [rng.standard_normal(n_samples).astype(np.float32).tolist() for _ in range(n)]
+    patient_id = ["iaf1", "iaf1", "iaf2", "iaf2"]
+
+    pyd_bank = iafdb_bank_models.IafdbBank.model_validate(
+        {
+            "schema_version": current_version("iafdb_bank"),
+            "created_utc": _now_iso(),
+            "bank_id": "tbank_iafdb_activation_test_2026-07-31",
+            "run_record_path": "iafdb_activation_v1_run_record.json",
+            "source": "iafdb v1.0.0",
+            "fs_hz": fs_hz,
+            "trace_duration_ms": trace_duration_ms,
+            "calibration_method": "r_wave_anchoring",
+            "calibration_target_qrs_pp_mv": 1.0,
+            "threshold_mode": "absolute",
+            "threshold_value": 0.5,
+            "band_hz": [30.0, 300.0],
+            "window_ms": trace_duration_ms,
+            "window_samples": n_samples,
+            "hop_ms": 256.0,
+            "source_records": ["iaf1_afw", "iaf2_afw"],
+            "traces": {
+                "signal": signal,
+                "patient_id": patient_id,
+                "source_record": [f"{p}_afw" for p in patient_id],
+                "source_channel": ["CS12", "CS34", "CS12", "CS34"],
+                "start_sample": [0, 256, 0, 256],
+                "peak_to_peak_mv": [1.0] * n,
+                "calibration_scalar": [0.95] * n,
+                "activation_position": [0.0, 0.25, 0.5, 1.0],
+            },
+        }
+    )
+    path = tmp_path / "iafdb_bank_activation.h5"
     write_iafdb_bank(pyd_bank, path)
     return path
 

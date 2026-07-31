@@ -2,7 +2,7 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 2/12 steps done (S1 ✅ · S2 ✅)
+**Status:** in progress · **Progress:** 3/12 steps done (S1 ✅ · S2 ✅ · S3 ✅)
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -150,11 +150,15 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
 
 ### S1 — Re-pin egm-contracts v0.6.0 ✅ (actual: ~15 min)
 - **Change:** `pyproject.toml` dependency pin `v0.5.3 → v0.6.0`. **No behavior change**, no source edits.
-- **Verify:** ~~full `pytest` suite green unchanged~~ → **the blast radius is exactly the synthetic
-  surface, and nothing else.** Measured after the re-pin: **30 passed / 10 errored**, ruff `check` +
-  `format --check` **clean**, mypy **33 errors in 3 files**. Every failure is synthetic-bank:
-  `readers.py` / `writers.py` / `converters.py` and the two test files whose fixture builds a 1.1-shaped
-  bank. IAFDB, noise-bank, records, phases and ClassifierBank I/O are untouched by the bump.
+- **Verify:** ~~full `pytest` suite green unchanged~~ → measured after the re-pin: **30 passed /
+  10 errored**, ruff `check` + `format --check` **clean**, mypy **33 errors in 3 files**.
+  **⚠ Correction (found at S3):** I first reported the blast radius as "exactly the synthetic surface".
+  That is right for the **tests** — all 10 errors are the 1.1-shaped fixture — but **wrong for mypy**.
+  The 33 split **27 synthetic** (`converters.py` 17 + `writers.py` 10) **+ 6 in
+  `records/training_metrics.py`**, which the re-pin caused directly: the regenerated
+  `TrainingMetricsRow` gained the six `train_*` columns and mypy reads them as required constructor
+  arguments. **No runtime break** — they default to `None`, the writer still works, and the CSV already
+  emits the new paired column order with empty train cells. Those 6 clear at **S10**.
 - **Depends on:** egm-contracts v0.6.0 merged + tagged — **done, `v0.6.0` @ `9595f09`, 2026-07-30**.
 
 > **Plan assumption that didn't survive contact — a declared red window (S1 → S7).** This step was
@@ -191,7 +195,7 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
 > of a known duplication, not a new discovery — the backlog item may eventually remove the duplication
 > and with it the need for the check.
 
-### S3 — P6 `iafdb_bank` 1.3 — `run_record_path` (B11) + `activation_position` (CL-053) ☐ (1–3 h)
+### S3 — P6 `iafdb_bank` 1.3 — `run_record_path` (B11) + `activation_position` (CL-053) ✅
 - **Change:** two additive pieces on the same 1.3 bump. **(a)** `banks/writers.py` `write_iafdb_bank`
   stamps the optional relative sidecar pointer; `banks/readers.py` `read_iafdb_bank_hdf5` reads it
   through `_opt_str_attr`. **(b)** *(CL-053)* both carry the new per-trace `traces/activation_position`
@@ -203,6 +207,22 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   IAFDB provenance for STU5, and the ClassifierBank stays source-agnostic (same rule that keeps θ off
   it). Worth pinning by test precisely because the converter is where it would leak.
 - **Depends on:** S1.
+- **Result:** ✅ suite **35 passed / 10 errored** (+3 passes, the ten synthetic errors unchanged); ruff
+  clean; mypy unchanged at 33 with **0 in `readers.py`**. Four new tests: both-optionals round-trip,
+  both-absent-read-as-`None`, and the converter negative test. The base fixture deliberately keeps both
+  fields **absent** — that is the real shape of a Wave-1 sliding-window bank, so every existing test
+  exercises the absent path for free; a second fixture carries them populated, with positions at the
+  `[0, 1]` **endpoints** (0.0 is what a zero-filling reader would produce, 1.0 catches an exclusive
+  upper bound).
+
+> **Two obligations swept out of the v0.6.0 schema prose** (the check I promised in CL-091). Grepping
+> the shipped schemas for "egm-data …" turns up exactly two *enforcement* clauses, both now placed:
+> the `noise_bank` ↔ run-record id agreement (→ S11), and **`synthetic_bank`'s cross-group FK** —
+> "egm-data checks it since JSON Schema cannot express a cross-group reference", i.e.
+> `traces/simulation_id` must resolve into `simulations/`. CL-089 flagged the latter too ("a writer
+> should refuse to emit an orphan rather than rely on validation after the fact") — **added to S6**.
+> The remaining hits are all the "stamps it on every new bank" required-on-write guards, which are
+> already implemented for all three banks.
 
 ### S4 — P4 `phase_manifest` optional `produced_by_*` (B19) ☐ (0.5–2 h)
 - **Change:** likely **no production code** — `phases/phase_manifest.py` is a Pydantic pass-through and
@@ -232,7 +252,9 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   `(N,)`; `label` as `int64`; θ-spec serialized to `generation_params_json` with `sort_keys=True` for
   deterministic bytes; `activation_position` written when present and omitted when not *(CL-062 — the
   writer half, which CL-062's scope note doesn't name but SEP12 needs, since the producer writes
-  through this function)*.
+  through this function)*. **Plus the cross-group FK guard** *(swept out of the schema prose at S3;
+  also CL-089)*: refuse to write a bank whose `traces/simulation_id` doesn't resolve into
+  `simulations/` — an orphan trace must fail at write time, not be left for the validator afterwards.
 - **Verify:** **round-trip test** (model → write → read → equal) that also runs the contracts
   file-level validator — the line this repo's tests have always held.
 - **Depends on:** S5.

@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 from myocard_egm_contracts.validators import (
     validate_iafdb_bank,
     validate_noise_bank,
@@ -113,10 +114,70 @@ def test_load_synthetic_without_label_fn(synthetic_bank_path: Path) -> None:
 
 
 def test_iafdb_bank_validates(iafdb_bank_path: Path) -> None:
-    """An IAFDB bank written by our writer must pass the v0.1.2
-    contracts validator (which no longer requires a label column)."""
+    """An IAFDB bank written by our writer must pass the 1.3 contracts
+    validator (which requires no label column, and treats both 1.3
+    optional fields as legitimately absent)."""
     result = validate_iafdb_bank(iafdb_bank_path)
     assert result.ok, result.issues
+
+
+def test_iafdb_bank_optionals_absent_read_as_none(iafdb_bank_path: Path) -> None:
+    """A bank written without the 1.3 optional fields reads them as None.
+
+    Both are permanently optional: a sliding-window bank has no
+    activation anchor, and a bank exported without the audit report has
+    no sidecar. The schema requires readers to treat absence as
+    "unknown" / "no sidecar" rather than an error, so this is the
+    default shape, not a degraded one."""
+    pyd_bank = read_iafdb_bank_hdf5(iafdb_bank_path)
+    assert pyd_bank.run_record_path is None
+    assert pyd_bank.traces.activation_position is None
+
+
+def test_iafdb_bank_optionals_round_trip(iafdb_bank_with_optionals_path: Path) -> None:
+    """Both iafdb_bank 1.3 optional fields survive a write/read cycle.
+
+    ``activation_position`` is checked at the [0, 1] endpoints because
+    0.0 is the value most likely to be confused with "absent" by a
+    reader that zero-fills, and 1.0 catches a normalization that assumes
+    an exclusive upper bound."""
+    result = validate_iafdb_bank(iafdb_bank_with_optionals_path)
+    assert result.ok, result.issues
+
+    pyd_bank = read_iafdb_bank_hdf5(iafdb_bank_with_optionals_path)
+    assert pyd_bank.run_record_path == "iafdb_activation_v1_run_record.json"
+    assert pyd_bank.traces.activation_position is not None
+    # Codegen wraps constrained numerics in a container with a .root
+    # accessor; unwrap before comparing.
+    positions = [float(getattr(x, "root", x)) for x in pyd_bank.traces.activation_position]
+    assert positions == pytest.approx([0.0, 0.25, 0.5, 1.0])
+
+
+def test_activation_position_does_not_reach_the_classifier_bank(
+    iafdb_bank_with_optionals_path: Path,
+) -> None:
+    """The converter must NOT propagate activation_position into the
+    ClassifierBank.
+
+    The ClassifierBank is a source-agnostic ML compression: signal,
+    label, and the keys needed to join back. Activation position is
+    IAFDB provenance that STU5 reads off the IafdbBank to compare
+    position distributions — the same rule that keeps generation
+    parameters off the ClassifierBank (CL-053 / CL-062).
+
+    This is a negative test on purpose. The converter's whole job is
+    flattening traces/ columns into trace_metadata, so adding a column
+    to the reader and not to the converter is a one-line omission no
+    positive test would catch — and a later contributor could "fix" the
+    omission in good faith."""
+    pyd_bank = read_iafdb_bank_hdf5(iafdb_bank_with_optionals_path)
+    assert pyd_bank.traces.activation_position is not None, "fixture must carry the column"
+
+    cb = iafdb_bank_to_classifier(pyd_bank, bank_path=iafdb_bank_with_optionals_path)
+    for t in cb.traces:
+        assert "activation_position" not in t.trace_metadata
+    # It is available on the source bank, which is where STU5 reads it.
+    assert len(pyd_bank.traces.activation_position) == cb.n_traces
 
 
 def test_iafdb_bank_to_classifier(iafdb_bank_path: Path, n_samples: int) -> None:
