@@ -2,10 +2,16 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** ready for PR · **Progress:** 12/12 steps done (S1–S12 ✅) — **98 passed, ruff + mypy clean,
-version 0.6.0, pinned to egm-contracts v0.6.0.** The full pre-PR checklist passes. Next: PR
-`development → release` (Daniel, GitHub web UI), then tag `v0.6.0` — which unblocks the four Wave-1
-adoptions (SEP12 · STU6 · IAF3 · CLF5).
+**Status:** ✅ **shipped** · **Progress:** 12/12 steps done (S1–S12 ✅)
+
+**Released 2026-07-31 — `v0.6.0`** (`d42d49e`). PR #11 merged `development → release`, tagged, and
+merged back; both branches and the tag sit on the same commit. 98 tests, ruff + bare `mypy` clean,
+pinned to egm-contracts v0.6.0. **Design §7 Wave-1 Track A is complete** (contracts v0.6.0 → egm-data
+v0.6.0), which unblocks the four adoptions — **SEP12 · STU6 · IAF3 · CLF5** — announced in CL-102.
+
+This plan is **ephemeral**: it is deleted at Phase Cleanup, its shipped work already summarized in
+`CHANGELOG.md` §0.6.0. Nothing here needs rolling up first — effort tracking was formally off for
+1.5 (see Effort tracking below), so there are no actuals to preserve.
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -699,6 +705,16 @@ negative test that keeps it out of the ClassifierBank.
   pinned by a negative test since the converter is exactly where it would leak. Field lands Wave 1
   unpopulated (IAF3); IAF1 fills it Wave 2. **B11 rescored XS → S**; repo total 17 pts / 17–41 h →
   **18 pts / 17.5–42 h**.
+- **2026-07-31** — **Released `v0.6.0`; Wave-1 Track A complete.** PR #11 merged with a merge commit,
+  tagged `d42d49e`, `release` merged back into `development`. Handoff to the four adopters posted as
+  **CL-102**, carrying the re-pin line, the `label_fn` inversion warning, and an advance list of the
+  consumer tests that will fail on re-pin (egm-classifier's 1.1-shaped conftest + `fibrosis_density`
+  label_fn, egm-studio's `bank_metadata` assertions, synthetic-egm-pipeline's per-trace `stim_edge`).
+  All four were insulated until now by pinning a released tag rather than an editable sibling.
+- **2026-07-31** — **Two process items left for the project-lead rather than fixed here:** the
+  fleet-wide `.gitignore` / PR-template gaps that `python-template` propagates (CL-097, CL-0101 — the
+  latter posted with a malformed id, flagged for their curation pass), and the `pr_checklist` §1
+  `mypy src` wording that cost this repo 21 unchecked type errors (CL-098).
 - **2026-07-31** — **S1 done; red window declared.** egm-contracts v0.6.0 landed everything asked for,
   including the CL-037 items (the six `train_*` CSV columns with the **paired** order, and
   `common.ActivationPosition` `$ref`'d by both banks). Re-pin measured: 30 pass / 10 error, ruff clean,
