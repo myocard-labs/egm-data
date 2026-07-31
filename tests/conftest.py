@@ -150,6 +150,54 @@ _SIM_JSON_COLUMNS = (
 )
 
 
+SYNTHETIC_BANK_ID = "tbank_synthetic_test_2026-06-27"
+
+
+def build_synthetic_bank_2_0_model(
+    *,
+    fs_hz: float,
+    trace_duration_ms: float,
+    n_samples: int,
+    with_activation_position: bool = False,
+) -> synthetic_bank_models.SyntheticBank:
+    """Build the Pydantic SyntheticBank the 2.0 writer serializes.
+
+    Same two simulations and theta-spec as the hand-built HDF5 fixture,
+    so writer output and hand-built reference describe the same bank.
+    """
+    rng = np.random.default_rng(0)
+    n = 6
+    doc: dict = {
+        "schema_version": current_version("synthetic_bank"),
+        "created_utc": _now_iso(),
+        "bank_id": SYNTHETIC_BANK_ID,
+        "description": "Synthetic bank test fixture",
+        "fs_hz": fs_hz,
+        "trace_duration_ms": trace_duration_ms,
+        "noise_bank_source": "iafdb_noise_v1.h5",
+        "generation_params": GENERATION_PARAMS_2_0,
+        "simulations": {
+            "simulation_id": [s["simulation_id"] for s in SIM_2_0],
+            "seed": [s["seed"] for s in SIM_2_0],
+            **{name: [s[name] for s in SIM_2_0] for name in _SIM_JSON_COLUMNS},
+        },
+        "traces": {
+            "signal": [
+                rng.standard_normal(n_samples).astype(np.float32).tolist() for _ in range(n)
+            ],
+            "simulation_id": [0, 0, 0, 1, 1, 1],
+            "pair_index": [0, 1, 2, 0, 1, 2],
+            "label": [0, 0, 0, 1, 1, 1],
+            "snr_db": [15.0] * n,
+            "noise_record": ["iaf1_afw"] * n,
+            "noise_channel": ["CS12"] * n,
+        },
+    }
+    if with_activation_position:
+        doc["traces"]["activation_position"] = [0.0, 0.25, 0.5, 0.5, 0.75, 1.0]
+    return synthetic_bank_models.SyntheticBank.model_validate(doc)
+
+
 def write_synthetic_bank_2_0_by_hand(
     path: Path,
     *,
@@ -239,54 +287,21 @@ def synthetic_bank_2_0_raw_path(
 def synthetic_bank_path(
     tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_samples: int
 ) -> Path:
-    """Build a tiny Pydantic SyntheticBank and write it to HDF5.
+    """Build a tiny Pydantic SyntheticBank (schema 2.0) and write it to HDF5.
 
-    Two patients x three traces each. Patient 0 healthy (density 0.0),
-    patient 1 fibrotic (density 0.3). Signals random — physiological
-    realism isn't needed for the I/O tests.
+    Two simulations x three bipolar pairs. Simulation 0 healthy
+    (substrate density 0.0, label 0), simulation 1 fibrotic (0.3, label
+    1). Signals random — physiological realism isn't needed for the I/O
+    tests.
+
+    Shares its per-simulation config and theta-spec with the hand-built
+    fixture (``SIM_2_0`` / ``GENERATION_PARAMS_2_0``), so the writer and
+    the hand-built reference describe the same bank and any divergence
+    between them shows up as a round-trip failure rather than as two
+    tests quietly asserting different things.
     """
-    rng = np.random.default_rng(0)
-    n = 6
-    signal = [rng.standard_normal(n_samples).astype(np.float32).tolist() for _ in range(n)]
-    sim_id = [0, 0, 0, 1, 1, 1]
-    pair_index = [0, 1, 2, 0, 1, 2]
-    electrode_row = [0, 0, 1, 0, 0, 1]
-    densities = [0.0, 0.0, 0.0, 0.3, 0.3, 0.3]
-
-    pyd_bank = synthetic_bank_models.SyntheticBank.model_validate(
-        {
-            "schema_version": current_version("synthetic_bank"),
-            "created_utc": _now_iso(),
-            "bank_id": "tbank_synthetic_test_2026-06-27",
-            "description": "Synthetic bank test fixture",
-            "fs_hz": fs_hz,
-            "trace_duration_ms": trace_duration_ms,
-            "simulator": "finitewave",
-            "cell_model": "aliev_panfilov",
-            "patch_size_mm": 40.0,
-            "patch_dr_mm": 0.25,
-            "ap_time_unit_ms": 12.9,
-            "fibrosis_strategy_name": "uniform_random",
-            "fibrosis_params": {"density_min": 0.0, "density_max": 0.5},
-            "electrode_config": {"grid_rows": 5, "grid_cols": 5, "spacing_mm": 2.0},
-            "mixer_config": {"snr_db_min": 10.0, "snr_db_max": 25.0},
-            "experiment_config": {"name": "test_fixture"},
-            "noise_bank_source": "iafdb_noise_v1.h5",
-            "traces": {
-                "signal": signal,
-                "simulation_id": sim_id,
-                "pair_index": pair_index,
-                "electrode_row": electrode_row,
-                "fibrosis_density": densities,
-                "fibrosis_density_realized": densities,
-                "electrode_height_mm": [0.5] * n,
-                "seed": [i * 100 for i in range(n)],
-                "snr_db": [15.0] * n,
-                "stim_edge": ["left"] * n,
-                "noise_record": ["iaf1_afw"] * n,
-                "noise_channel": ["CS12"] * n,
-            },
-        }
+    pyd_bank = build_synthetic_bank_2_0_model(
+        fs_hz=fs_hz, trace_duration_ms=trace_duration_ms, n_samples=n_samples
     )
     path = tmp_path / "synthetic_bank.h5"
     write_synthetic_bank(pyd_bank, path)

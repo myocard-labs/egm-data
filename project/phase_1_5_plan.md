@@ -2,8 +2,9 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** in progress · **Progress:** 5/12 steps done (S1–S5 ✅) — the additive trio landed and the
-2.0 reader is in; the red window closes when S6/S7 replace the 1.1-shaped fixture.
+**Status:** in progress · **Progress:** 6/12 steps done (S1–S6 ✅) — reader + writer are in and the
+fixture is 2.0-shaped; the red window is down to the **converter** (6 failures, 17 mypy errors, all in
+`converters.py`) and closes at S7.
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -284,7 +285,7 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
 > `_unwrap` / `_type_name` helpers are the interim insulation and are written to survive the flip
 > either way. Retiring them once contracts ships the fix is logged in `roadmap.md`.
 
-### S6 — DAT1b · `synthetic_bank` 2.0 **writer** + round-trip ☐ (2–4 h)
+### S6 — DAT1b · `synthetic_bank` 2.0 **writer** + round-trip ✅
 - **Change:** `banks/writers.py` — mirror S5. `simulations/` datasets sized `(M,)`; `traces/` sized
   `(N,)`; `label` as `int64`; θ-spec serialized to `generation_params_json` with `sort_keys=True` for
   deterministic bytes; `activation_position` written when present and omitted when not *(CL-062 — the
@@ -292,9 +293,23 @@ Daniel's migration-wave de-risking logic applied one level down. Status: ☐ tod
   through this function)*. **Plus the cross-group FK guard** *(swept out of the schema prose at S3;
   also CL-089)*: refuse to write a bank whose `traces/simulation_id` doesn't resolve into
   `simulations/` — an orphan trace must fail at write time, not be left for the validator afterwards.
-- **Verify:** **round-trip test** (model → write → read → equal) that also runs the contracts
-  file-level validator — the line this repo's tests have always held.
+- **Verify:** ✅ 15 tests in `test_synthetic_bank_2_0.py` (10 reader + 5 writer). Suite **57 passed /
+  6 failed** — up from 48/10, and the 10 *collection errors* are gone entirely now the shared fixture
+  builds a 2.0 model. ruff clean. **mypy 33 → 23**, with `writers.py` now **clean**; the remaining 23
+  are `converters.py` (17 → S7) and `training_metrics.py` (6 → S10).
 - **Depends on:** S5.
+- **A structural check, not just a round-trip.** `test_writer_matches_the_hand_built_layout` compares
+  group and dataset *names* between our writer's output and the hand-built reference. A round-trip
+  alone cannot catch a column written under the wrong name, a missing `_json` suffix, or a stray 1.1
+  leftover — reader and writer would agree with each other and both be wrong. This is the payoff for
+  having kept the hand-built fixture independent at S5.
+- **The old fixture became the 2.0 fixture.** `synthetic_bank_path` now builds through
+  `build_synthetic_bank_2_0_model`, which shares `SIM_2_0` / `GENERATION_PARAMS_2_0` with the
+  hand-built file — so writer output and the independent reference describe *the same bank*, and any
+  divergence surfaces as a failure rather than as two tests quietly asserting different things.
+- **FK guard shipped** (`_check_simulation_fk`): a trace pointing at an unrecorded `simulation_id` is
+  refused at the write call, with the offending ids and the known set in the message. Wired ahead of
+  the file being opened, so a rejected bank leaves no partial file behind.
 
 ### S7 — DAT1c · θ-free `synthetic_bank_to_classifier` ☐ (2–4 h)
 - **Change:** `banks/converters.py` — take `label_truth` from the bank's int `label` and

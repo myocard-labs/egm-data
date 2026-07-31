@@ -17,8 +17,14 @@ import h5py
 import pytest
 from myocard_egm_contracts.validators import validate_synthetic_bank
 
-from conftest import GENERATION_PARAMS_2_0, SIM_2_0, SYNTHETIC_2_0_BANK_ID
-from myocard_egm_data.banks import read_synthetic_bank_hdf5
+from conftest import (
+    GENERATION_PARAMS_2_0,
+    SIM_2_0,
+    SYNTHETIC_2_0_BANK_ID,
+    build_synthetic_bank_2_0_model,
+    write_synthetic_bank_2_0_by_hand,
+)
+from myocard_egm_data.banks import read_synthetic_bank_hdf5, write_synthetic_bank
 
 
 def _unwrap(value: object) -> object:
@@ -174,8 +180,6 @@ def test_activation_position_round_trips_when_present(
     tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_samples: int
 ) -> None:
     """When the splitter has run, the column reads back at full precision."""
-    from conftest import write_synthetic_bank_2_0_by_hand
-
     path = write_synthetic_bank_2_0_by_hand(
         tmp_path / "with_positions.h5",
         fs_hz=fs_hz,
@@ -251,6 +255,101 @@ def test_malformed_config_json_names_the_column_and_row(
 
     with pytest.raises(ValueError, match=r"substrate_json.*row 1"):
         read_synthetic_bank_hdf5(broken)
+
+
+# ---------------------------------------------------------------------------
+# Writer (S6)
+# ---------------------------------------------------------------------------
+
+
+def test_writer_output_validates(synthetic_bank_path: Path) -> None:
+    """A bank written by our writer passes the contracts validator."""
+    result = validate_synthetic_bank(synthetic_bank_path)
+    assert result.ok, result.issues
+
+
+def test_writer_matches_the_hand_built_layout(
+    synthetic_bank_path: Path, synthetic_bank_2_0_raw_path: Path
+) -> None:
+    """Our writer produces the same HDF5 *structure* as the hand-built file.
+
+    This is the point of keeping an independent reference: a reader and
+    writer that share a misreading of the schema round-trip perfectly.
+    Comparing group and dataset names against a file laid out from
+    ``x-hdf5-mapping`` catches a column written under the wrong name, a
+    missing ``_json`` suffix, or a stray 1.1 leftover — none of which a
+    round-trip alone would notice.
+    """
+    import h5py as _h5py
+
+    def _layout(path: Path) -> dict[str, list[str]]:
+        with _h5py.File(path, "r") as f:
+            return {
+                "root_attrs": sorted(f.attrs),
+                "simulations": sorted(f["simulations"]),
+                "traces": sorted(f["traces"]),
+            }
+
+    assert _layout(synthetic_bank_path) == _layout(synthetic_bank_2_0_raw_path)
+
+
+def test_round_trip_preserves_config_and_traces(
+    synthetic_bank_path: Path, fs_hz: float, trace_duration_ms: float, n_samples: int
+) -> None:
+    """model -> write -> read returns an equivalent bank."""
+    original = build_synthetic_bank_2_0_model(
+        fs_hz=fs_hz, trace_duration_ms=trace_duration_ms, n_samples=n_samples
+    )
+    reloaded = read_synthetic_bank_hdf5(synthetic_bank_path)
+
+    assert reloaded.bank_id == original.bank_id
+    assert reloaded.simulations.model_dump(mode="json") == original.simulations.model_dump(
+        mode="json"
+    )
+    assert reloaded.generation_params.model_dump(mode="json") == (
+        original.generation_params.model_dump(mode="json")
+    )
+    assert [int(_unwrap(x)) for x in reloaded.traces.label] == [0, 0, 0, 1, 1, 1]
+    assert list(reloaded.traces.simulation_id) == list(original.traces.simulation_id)
+
+
+def test_writer_round_trips_activation_position(
+    tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_samples: int
+) -> None:
+    """The optional column survives our own write path too (CL-062)."""
+    bank = build_synthetic_bank_2_0_model(
+        fs_hz=fs_hz,
+        trace_duration_ms=trace_duration_ms,
+        n_samples=n_samples,
+        with_activation_position=True,
+    )
+    path = write_synthetic_bank(bank, tmp_path / "written_positions.h5")
+    reloaded = read_synthetic_bank_hdf5(path)
+
+    assert reloaded.traces.activation_position is not None
+    positions = [float(_unwrap(x)) for x in reloaded.traces.activation_position]
+    assert positions == pytest.approx([0.0, 0.25, 0.5, 0.5, 0.75, 1.0])
+
+
+def test_writer_refuses_an_orphan_trace(
+    tmp_path: Path, fs_hz: float, trace_duration_ms: float, n_samples: int
+) -> None:
+    """A trace whose simulation_id has no simulation is refused on write.
+
+    The cross-group FK is checked by the contracts validator, but JSON
+    Schema cannot express a cross-group reference, so the schema hands
+    this to egm-data. Catching it at the write call surfaces a producer
+    bug where it happened, rather than as a validation failure against a
+    file already on disk (CL-089).
+    """
+    bank = build_synthetic_bank_2_0_model(
+        fs_hz=fs_hz, trace_duration_ms=trace_duration_ms, n_samples=n_samples
+    )
+    # Point one trace at a simulation that was never recorded.
+    bank.traces.simulation_id[-1] = 99
+
+    with pytest.raises(ValueError, match=r"99.*simulations/"):
+        write_synthetic_bank(bank, tmp_path / "orphan.h5")
 
 
 def test_theta_spec_survives_byte_for_byte(synthetic_bank_2_0_raw_path: Path) -> None:
