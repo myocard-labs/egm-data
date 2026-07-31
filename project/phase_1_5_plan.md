@@ -2,7 +2,7 @@
 
 **Repo:** egm-data · **Phase:** 1.5
 **Phase design doc:** `intracardiac-platform/phases/phase_1_5/design.md`
-**Status:** planning · **Progress:** 0/12 steps done
+**Status:** in progress · **Progress:** 1/12 steps done (S1 ✅)
 **Repo estimate:** **18 points · 17.5–42 h** (cold-start ranges — see [Estimate basis](#estimate-basis))
 
 egm-data is **step 2 of the Wave-1 re-pin cascade**: egm-contracts v0.6.0 tags → this repo ships every
@@ -148,11 +148,24 @@ Each step is one focused commit that ends green (its own tests + `ruff format` +
 v0.6.0 codegen and the re-pin are sound before S5–S8 sink real time into the breaking restructure —
 Daniel's migration-wave de-risking logic applied one level down. Status: ☐ todo · 🔨 wip · ✅ done.
 
-### S1 — Re-pin egm-contracts v0.6.0, suite green ☐ (0.5–2 h)
-- **Change:** `pyproject.toml` dependency pin `v0.5.3 → v0.6.0`; fix any import/name breakage from the
-  regenerated models. **No behavior change.**
-- **Verify:** full `pytest` suite green unchanged; `mypy` clean against the new `py.typed` models.
-- **Depends on:** egm-contracts v0.6.0 **merged + tagged** (external gate — nothing here starts first).
+### S1 — Re-pin egm-contracts v0.6.0 ✅ (actual: ~15 min)
+- **Change:** `pyproject.toml` dependency pin `v0.5.3 → v0.6.0`. **No behavior change**, no source edits.
+- **Verify:** ~~full `pytest` suite green unchanged~~ → **the blast radius is exactly the synthetic
+  surface, and nothing else.** Measured after the re-pin: **30 passed / 10 errored**, ruff `check` +
+  `format --check` **clean**, mypy **33 errors in 3 files**. Every failure is synthetic-bank:
+  `readers.py` / `writers.py` / `converters.py` and the two test files whose fixture builds a 1.1-shaped
+  bank. IAFDB, noise-bank, records, phases and ClassifierBank I/O are untouched by the bump.
+- **Depends on:** egm-contracts v0.6.0 merged + tagged — **done, `v0.6.0` @ `9595f09`, 2026-07-30**.
+
+> **Plan assumption that didn't survive contact — a declared red window (S1 → S7).** This step was
+> written as "suite green unchanged", which is **not achievable for a breaking schema change**: the
+> conftest fixture builds a `synthetic_bank` 1.1 model that 2.0 refuses, so the 10 synthetic tests and
+> the 33 mypy errors cannot go green until the reader, writer and converter are rewritten (S5–S7). Two
+> ways to handle it — `xfail`-mark them so every commit is green, or declare the window. **Declared**,
+> because those tests are rewritten wholesale in S5–S7 (the fixture itself must become 2.0-shaped), so
+> `xfail` markers would be added and deleted three steps later purely for appearances. The window is
+> **contained inside the single PR** — nothing red reaches `release`, and `development` is not a
+> bisect surface mid-wave. **Closes at S7**; S12's pre-PR run is the real gate.
 
 ### S2 — P5 `noise_bank` 1.1 `bank_id` (B20) ☐ (1–3 h)
 - **Change:** `banks/noise_bank.py` — `write_noise_bank` stamps `f.attrs["bank_id"]` (optional-in-schema,
@@ -453,6 +466,16 @@ negative test that keeps it out of the ClassifierBank.
   pinned by a negative test since the converter is exactly where it would leak. Field lands Wave 1
   unpopulated (IAF3); IAF1 fills it Wave 2. **B11 rescored XS → S**; repo total 17 pts / 17–41 h →
   **18 pts / 17.5–42 h**.
+- **2026-07-31** — **S1 done; red window declared.** egm-contracts v0.6.0 landed everything asked for,
+  including the CL-037 items (the six `train_*` CSV columns with the **paired** order, and
+  `common.ActivationPosition` `$ref`'d by both banks). Re-pin measured: 30 pass / 10 error, ruff clean,
+  33 mypy errors — **all** confined to the synthetic reader / writer / converter and the 1.1-shaped test
+  fixture. S1's "suite green unchanged" was unachievable by construction for a breaking schema change;
+  the window is declared rather than papered over with `xfail`, and closes at S7. See the note under S1.
+- **2026-07-31** — **Erratum spotted in CL-089** (not mine to edit): its summary table says
+  `phase_manifest` "`produced_by_*` left `required`", but the shipped schema has them **optional** in
+  all seven entry `$defs`, and the CHANGELOG says so correctly. The table is the quick-reference people
+  skim and egm-studio's curation change depends on it. Raised for correction.
 - **2026-07-29** — **CL-062 folded into DAT1** — the synthetic twin of CL-053. `synthetic_bank` 2.0's
   `traces/` gains the same optional `activation_position`; S5 reads it, S6 writes it, S7 gets the
   matching negative test keeping it off the ClassifierBank. **No estimate change:** one optional float
