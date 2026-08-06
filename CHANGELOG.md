@@ -7,6 +7,27 @@ All notable changes to `myocard-egm-data` are documented here. The format follow
 Entries are per-version from `v0.4.0` on; the pre-linkage beta (`v0.1.0`–`v0.3.4`) is
 summarized under [Earlier versions](#earlier-versions).
 
+## [0.6.1] — 2026-08-06
+
+Patch release for a live artifact-correctness bug, cut so iafdb-pipeline can re-pin for its Wave-1
+work. No API or schema change; **v0.6.0 consumers can re-pin without touching any call site.**
+
+### Fixed
+
+- **RootModel reprs no longer leak into a ClassifierBank** (CL-136). `iafdb_bank_to_classifier`
+  called `str()` / `list()` directly on values taken out of the contracts model, so *constrained*
+  fields — which codegen wraps in a `RootModel` — came out as their repr rather than their value:
+  `patient_id` read as `"root='iaf1'"` and `band_hz` as `['root=30.0', 'root=300.0']`. Both reached a
+  real artifact. The values stayed distinct per patient, so patient-aware splitting was unaffected,
+  but anything that displays, joins on, or parses them was polluted.
+
+  Every value crossing out of a contracts model in that converter now goes through `_unwrap`,
+  including the fields that read clean today (`source_record`, `source_channel`,
+  `calibration_scalar`). Those are unwrapped only because they carry no schema constraint — adding a
+  `pattern:` or `minimum:` to any of them would have silently started polluting the artifact, so the
+  fix removes the latent class rather than the two known instances. The regression test asserts over
+  *every* key in `bank_metadata` and `trace_metadata` for the same reason.
+
 ## [0.6.0] — 2026-07-31
 
 Phase-1.5 Wave 1 — the I/O half of the coordinated schema bump, re-pinned to
@@ -174,6 +195,7 @@ this is where the `banks/` + `records/` I/O layer took shape:
   egm-contracts through its v0.3.0 schema renames and the v0.4.1 `hybrid_eval_metrics`
   removal (egm-data v0.3.4).
 
+[0.6.1]: https://github.com/myocard-labs/egm-data/releases/tag/v0.6.1
 [0.6.0]: https://github.com/myocard-labs/egm-data/releases/tag/v0.6.0
 [0.5.0]: https://github.com/myocard-labs/egm-data/releases/tag/v0.5.0
 [0.4.2]: https://github.com/myocard-labs/egm-data/releases/tag/v0.4.2
