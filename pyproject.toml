@@ -20,7 +20,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "myocard-egm-data"
-version = "0.6.0"
+version = "0.6.1"
 description = "Pure I/O for myocard-egm-contracts formats: HDF5 banks, run records, predictions, and phase-manifest JSON."
 readme = "README.md"
 license = { file = "LICENSE" }

@@ -260,6 +260,51 @@ def test_iafdb_bank_to_classifier(iafdb_bank_path: Path, n_samples: int) -> None
         assert isinstance(t.trace_metadata["patient_id"], str)
 
 
+def test_no_rootmodel_repr_leaks_into_a_classifier_bank(
+    tmp_path: Path, iafdb_bank_path: Path
+) -> None:
+    """No converted value may carry a RootModel repr (CL-136).
+
+    egm-contracts wraps *constrained* fields in a RootModel, so calling
+    ``str()`` on one yields ``"root='iaf1'"`` instead of ``"iaf1"``.
+    That shipped in a real artifact: patient_id read as ``root='iaf1'``
+    and band_hz as ``['root=30.0', 'root=300.0']``.
+
+    This asserts over **every** value in bank_metadata and
+    trace_metadata rather than the two fields that were wrong, because
+    the bug is latent in the ones that read clean: source_record and
+    calibration_scalar are unwrapped today only because they carry no
+    schema constraint, and adding a ``pattern:`` or ``minimum:`` to
+    either would silently start polluting the artifact. A blanket
+    assertion fails the day that happens; a field-by-field one would
+    not.
+
+    Checked after a write/read cycle because the JSON encoder falls back
+    to ``str()`` on an unserializable value, so the pollution is only
+    fully visible on disk.
+    """
+    cb = load_iafdb_bank_as_classifier(iafdb_bank_path, label_fn=lambda b: None)
+    path = write_classifier_bank(cb, tmp_path / "iafdb.classifier.h5")
+    reloaded = load_classifier_bank(path)
+
+    def _offenders(scope: str, mapping: dict[str, Any]) -> list[str]:
+        return [
+            f"{scope}[{k!r}] = {v!r}"
+            for k, v in mapping.items()
+            if "root=" in repr(v) or "RootModel" in repr(v)
+        ]
+
+    bad = _offenders("bank_metadata", reloaded.banks[0].bank_metadata)
+    for index, trace in enumerate(reloaded.traces):
+        bad += _offenders(f"traces[{index}].trace_metadata", trace.trace_metadata)
+
+    assert not bad, "RootModel repr leaked into the ClassifierBank:\n  " + "\n  ".join(bad)
+
+    # And the values are actually right, not merely unwrapped-looking.
+    assert reloaded.traces[0].trace_metadata["patient_id"] == "iaf1"
+    assert reloaded.banks[0].bank_metadata["band_hz"] == [30.0, 300.0]
+
+
 def test_iafdb_label_fn_returning_none(iafdb_bank_path: Path) -> None:
     """A label_fn returning None signals 'no ground-truth labels';
     every ClassifierTrace ends up with label_truth=None."""

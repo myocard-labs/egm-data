@@ -267,11 +267,11 @@ def iafdb_bank_to_classifier(
         "calibration_target_qrs_pp_mv": pyd_bank.calibration_target_qrs_pp_mv,
         "threshold_mode": _enum_or_str(pyd_bank.threshold_mode),
         "threshold_value": pyd_bank.threshold_value,
-        "band_hz": list(pyd_bank.band_hz),
+        "band_hz": [float(_unwrap(x)) for x in pyd_bank.band_hz],
         "window_ms": pyd_bank.window_ms,
         "window_samples": pyd_bank.window_samples,
         "hop_ms": pyd_bank.hop_ms,
-        "source_records": list(pyd_bank.source_records),
+        "source_records": [str(_unwrap(x)) for x in pyd_bank.source_records],
     }
     source_meta = ClassifierBankMetaData(
         bank_id=source_id,
@@ -285,14 +285,23 @@ def iafdb_bank_to_classifier(
     fs_hz = _enum_or_float(pyd_bank.fs_hz)
     for i in range(n):
         trace_metadata: dict[str, Any] = {
-            "patient_id": str(t.patient_id[i]),
-            "source_record": str(t.source_record[i]),
-            "source_channel": str(t.source_channel[i]),
-            # Codegen wraps numeric items in a constraint type with a
-            # ``.root`` accessor; unwrap before casting.
+            # Every value crossing out of a contracts model goes through
+            # ``_unwrap``, without exception. Codegen wraps *constrained*
+            # fields in a RootModel, so ``str(x)`` on one yields
+            # ``"root='iaf1'"`` rather than the value — and which fields
+            # are constrained is a property of the schema that can change
+            # under us. ``source_record`` / ``source_channel`` /
+            # ``calibration_scalar`` read clean today only because they
+            # carry no constraint; adding a ``pattern:`` or ``minimum:``
+            # to any of them would silently start polluting the artifact.
+            # Unwrapping unconditionally is a no-op on plain values and
+            # removes the whole class (CL-136).
+            "patient_id": str(_unwrap(t.patient_id[i])),
+            "source_record": str(_unwrap(t.source_record[i])),
+            "source_channel": str(_unwrap(t.source_channel[i])),
             "start_sample": int(_unwrap(t.start_sample[i])),
             "peak_to_peak_mv": float(_unwrap(t.peak_to_peak_mv[i])),
-            "calibration_scalar": float(t.calibration_scalar[i]),
+            "calibration_scalar": float(_unwrap(t.calibration_scalar[i])),
         }
         traces.append(
             ClassifierTrace(
