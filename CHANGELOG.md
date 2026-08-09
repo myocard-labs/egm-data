@@ -7,6 +7,31 @@ All notable changes to `myocard-egm-data` are documented here. The format follow
 Entries are per-version from `v0.4.0` on; the pre-linkage beta (`v0.1.0`–`v0.3.4`) is
 summarized under [Earlier versions](#earlier-versions).
 
+## [0.6.2] — 2026-08-09
+
+Re-pin so iafdb-pipeline can export an uncalibrated bank. **No source change** — the enum is enforced
+entirely through the re-pinned Pydantic model, and both version-stamping sites already call
+`current_version()`, so new banks stamp `iafdb_bank` **1.4** on their own.
+
+Released ahead of iafdb's first `calibration_method: "none"` bank: without this tag that bank would be
+unreadable by the library that writes it.
+
+### Changed
+
+- Re-pin `egm-contracts v0.6.0 → v0.6.1` — `iafdb_bank` **1.4**: `calibration_method` admits `"none"`
+  alongside `"r_wave_anchoring"`, and `schema_version` accepts both `"1.3"` and `"1.4"`. Existing 1.3
+  banks stay readable — the enum widened, nothing was removed.
+
+### Added
+
+- A round-trip test for the uncalibrated path: a `none` / 1.4 bank through writer → contracts
+  validator → reader → converter → ClassifierBank → write → read. It pins three things that the enum
+  widening does not make obvious — that the writer stamps 1.4 unaided (via `current_version()`, whose
+  result is the **last** enum entry, so the order in the schema is load-bearing); that `+inf`, the
+  `none`-mode sentinel for `calibration_target_qrs_pp_mv`, survives the ClassifierBank JSON round trip
+  *because* that dump does not pass `allow_nan=False`; and that a `none` value reaches
+  `bank_metadata` untouched.
+
 ## [0.6.1] — 2026-08-06
 
 Patch release for a live artifact-correctness bug, cut so iafdb-pipeline can re-pin for its Wave-1
@@ -195,6 +220,7 @@ this is where the `banks/` + `records/` I/O layer took shape:
   egm-contracts through its v0.3.0 schema renames and the v0.4.1 `hybrid_eval_metrics`
   removal (egm-data v0.3.4).
 
+[0.6.2]: https://github.com/myocard-labs/egm-data/releases/tag/v0.6.2
 [0.6.1]: https://github.com/myocard-labs/egm-data/releases/tag/v0.6.1
 [0.6.0]: https://github.com/myocard-labs/egm-data/releases/tag/v0.6.0
 [0.5.0]: https://github.com/myocard-labs/egm-data/releases/tag/v0.5.0

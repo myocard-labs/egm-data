@@ -14,17 +14,22 @@ itself (the egm-data-owned intermediate).
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 import pytest
+from myocard_egm_contracts import iafdb_bank as iafdb_bank_models
+from myocard_egm_contracts.schema_info import current_version, supported_versions
 from myocard_egm_contracts.validators import (
     validate_iafdb_bank,
     validate_noise_bank,
     validate_synthetic_bank,
 )
 
+from conftest import _now_iso
 from myocard_egm_data.banks import (
     CLASSIFIER_BANK_VERSION,
     ClassifierBank,
@@ -40,6 +45,7 @@ from myocard_egm_data.banks import (
     read_synthetic_bank_hdf5,
     synthetic_bank_to_classifier,
     write_classifier_bank,
+    write_iafdb_bank,
     write_noise_bank,
 )
 
@@ -47,6 +53,11 @@ from myocard_egm_data.banks import (
 def _unwrap(value: Any) -> Any:
     """Unwrap a codegen constraint-root container (``.root`` accessor)."""
     return getattr(value, "root", value)
+
+
+def _enum_or_str(value: Any) -> str:
+    """Unwrap a codegen Enum to its underlying string value."""
+    return str(getattr(value, "value", value))
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +314,82 @@ def test_no_rootmodel_repr_leaks_into_a_classifier_bank(
     # And the values are actually right, not merely unwrapped-looking.
     assert reloaded.traces[0].trace_metadata["patient_id"] == "iaf1"
     assert reloaded.banks[0].bank_metadata["band_hz"] == [30.0, 300.0]
+
+
+def test_uncalibrated_iafdb_bank_survives_the_whole_path(tmp_path: Path, n_samples: int) -> None:
+    """An `iafdb_bank` 1.4 bank with `calibration_method: "none"` round-trips.
+
+    egm-contracts v0.6.1 widened the enum so iafdb can export an
+    unfiltered, uncalibrated bank (CL-156 / CL-157). egm-data needed no
+    source change for that — but "no code change" is a claim about
+    today's code, and iafdb is about to write real banks through this
+    path, so it is worth pinning rather than believing.
+
+    Three things this actually guards, none of which the enum widening
+    makes obvious:
+
+    - **The writer stamps 1.4 by itself**, because both sites call
+      `current_version()`, which returns the *last* enum entry. CL-157
+      flagged that the entry order is load-bearing: re-sorting
+      `["1.3", "1.4"]` would silently start stamping new banks 1.3.
+    - **`+inf` survives the ClassifierBank JSON round trip.** `none`
+      mode writes `calibration_target_qrs_pp_mv = +inf` as a sentinel,
+      and `bank_metadata` is JSON-serialized on write. It survives only
+      because that dump does *not* pass `allow_nan=False` — unlike
+      `_write_pydantic_json`, which does. Adding that flag for
+      consistency would break this silently.
+    - **A `none` value reaches the ClassifierBank untouched**, since
+      `bank_metadata` is free-form and nothing branches on the method.
+    """
+    bank = iafdb_bank_models.IafdbBank.model_validate(
+        {
+            "schema_version": current_version("iafdb_bank"),
+            "created_utc": _now_iso(),
+            "bank_id": "tbank_iafdb_uncalibrated_2026-08-09",
+            "source": "iafdb v1.0.0",
+            "fs_hz": 1000.0,
+            "trace_duration_ms": float(n_samples),
+            "calibration_method": "none",
+            # Sentinel for "no target, because no calibration ran" — the
+            # same idiom peak_to_peak_mv and hop_ms use.
+            "calibration_target_qrs_pp_mv": float("inf"),
+            "threshold_mode": "none",
+            "threshold_value": float("nan"),
+            "band_hz": [30.0, 300.0],
+            "window_ms": float(n_samples),
+            "window_samples": n_samples,
+            "hop_ms": float(n_samples),
+            "source_records": ["iaf1_afw"],
+            "traces": {
+                "signal": np.zeros((2, n_samples), dtype=np.float32).tolist(),
+                "patient_id": ["iaf1", "iaf2"],
+                "source_record": ["iaf1_afw"] * 2,
+                "source_channel": ["CS12"] * 2,
+                "start_sample": [0, n_samples],
+                "peak_to_peak_mv": [float("inf")] * 2,
+                "calibration_scalar": [1.0] * 2,
+            },
+        }
+    )
+    path = write_iafdb_bank(bank, tmp_path / "uncalibrated.h5")
+    assert validate_iafdb_bank(path).ok
+
+    # 1.4 stamped without a writer change, and the reader accepts it.
+    with h5py.File(path, "r") as f:
+        assert f.attrs["schema_version"] == "1.4"
+    reloaded = read_iafdb_bank_hdf5(path)
+    assert _enum_or_str(reloaded.calibration_method) == "none"
+    assert math.isinf(reloaded.calibration_target_qrs_pp_mv)
+
+    # 1.3 banks stay readable — the enum widened, nothing was removed.
+    assert "1.3" in supported_versions("iafdb_bank")
+
+    # And the sentinel survives the ClassifierBank JSON round trip.
+    cb = load_iafdb_bank_as_classifier(path, label_fn=lambda b: None)
+    written = write_classifier_bank(cb, tmp_path / "uncalibrated.classifier.h5")
+    bank_metadata = load_classifier_bank(written).banks[0].bank_metadata
+    assert bank_metadata["calibration_method"] == "none"
+    assert math.isinf(bank_metadata["calibration_target_qrs_pp_mv"])
 
 
 def test_iafdb_label_fn_returning_none(iafdb_bank_path: Path) -> None:
